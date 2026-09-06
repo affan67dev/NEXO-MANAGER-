@@ -1,0 +1,28 @@
+{
+  "manager": {
+    "model": "llama",
+    "role": "manager_orchestrator",
+    "permissions": ["plan","delegate","coordinate","review","report"],
+    "production_deploy": false,
+    "destructive_database_access": false
+  },
+  "coder": {
+    "model": "deepseek",
+    "role": "coding_debugging",
+    "permissions": ["inspect_code","prepare_patch","run_tests","fix_code"],
+    "production_deploy": false,
+    "destructive_database_access": false
+  },
+  "auditor": {
+    "model": "qwen",
+    "role": "security_audit_quality_review",
+    "permissions": ["review_code","security_scan","find_risks","check_multilingual_support"],
+    "production_deploy": false,
+    "destructive_database_access": false
+  },
+  "consensus": {
+    "required_for_high_risk_changes": true,
+    "minimum_reviewers": 2,
+    "owner_approval_required_for_production": true
+  }
+}

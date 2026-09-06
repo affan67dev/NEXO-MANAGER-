@@ -1,13 +1,11 @@
-from services.rag.rag import build_context
-from services.guardrails.guardrails import verify
+from __future__ import annotations
+from agents.verification.verification import verify
 
-def prepare(query,draft,rules=None):
-    context=build_context(query)
-    result=verify(draft,context,rules or [])
-    return {
-        "query":query,
-        "context":context,
-        "draft":draft,
-        "approved":result["approved"],
-        "problems":result["problems"]
-    }
+def run_verification(output: dict, evidence: list | None = None) -> dict:
+    result = verify(output, evidence)
+    if not result["verified"]:
+        result["status"] = "not_verified"
+        result["recommendation"] = "Do not claim completion without evidence."
+    else:
+        result["status"] = "verified"
+    return result

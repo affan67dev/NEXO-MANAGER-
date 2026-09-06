@@ -1,0 +1,33 @@
+{
+  "phase": 1,
+  "mode": "APP_ONLY",
+  "active_scope": [
+    "application",
+    "backend",
+    "api",
+    "database",
+    "server",
+    "application_code",
+    "users",
+    "user_support",
+    "support_email",
+    "official_whatsapp_support",
+    "monitoring",
+    "security",
+    "user_reports",
+    "moderation",
+    "testing",
+    "verification",
+    "deployment_health",
+    "logs",
+    "performance"
+  ],
+  "deferred_scope": [
+    "youtube_business",
+    "video_editing_business",
+    "website_client_business",
+    "general_client_acquisition",
+    "unrelated_automation"
+  ],
+  "principle": "One application, one priority, one central manager."
+}

@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "window": {
+    "start": "03:00",
+    "end": "05:00"
+  },
+  "timezone": "Asia/Kolkata",
+  "frequency": "twice_per_week",
+  "tasks": [
+    "error_log_scan",
+    "health_check",
+    "security_review",
+    "database_backup",
+    "test_suite"
+  ],
+  "automatic_actions": "low_risk_reversible_only",
+  "production_deploy": "owner_approval_required"
+}

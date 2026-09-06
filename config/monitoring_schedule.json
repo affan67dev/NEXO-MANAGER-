@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "frequency": "twice_per_week",
+  "maintenance_window": "after_configured_maintenance_time",
+  "automatic_actions": "low_risk_reversible_only",
+  "checks": [
+    "application_availability",
+    "backend_health",
+    "api_failures",
+    "server_health",
+    "database_health",
+    "logs",
+    "security_events",
+    "authentication_failures",
+    "user_reports",
+    "support_messages",
+    "support_email",
+    "scheduled_jobs",
+    "deployment_health",
+    "performance"
+  ]
+}

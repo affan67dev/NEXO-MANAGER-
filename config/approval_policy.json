@@ -1,0 +1,20 @@
+{
+  "autonomy_levels": {
+    "0": "observe",
+    "1": "recommend",
+    "2": "prepare",
+    "3": "execute_approved_action",
+    "4": "scheduled_low_risk_reversible_automation"
+  },
+  "approval_required": [
+    "permanent_account_deletion",
+    "permanent_data_deletion",
+    "financial_transaction",
+    "binding_contract",
+    "major_production_deployment",
+    "irreversible_database_change",
+    "high_impact_account_action",
+    "important_external_commitment"
+  ],
+  "default": "prepare_and_request_approval"
+}

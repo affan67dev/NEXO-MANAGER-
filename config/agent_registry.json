@@ -1,0 +1,25 @@
+{
+  "manager": {
+    "name": "NEXO Manager",
+    "model_role": "Llama",
+    "status": "active",
+    "responsibilities": ["understand","analyze","plan","delegate","coordinate","verify","report"]
+  },
+  "agents": {
+    "planning": {"role": "requirements and technical planning", "status": "active"},
+    "coding": {"role": "application code, debugging and implementation", "status": "active"},
+    "research": {"role": "authorized application research and documentation", "status": "active"},
+    "support": {"role": "user support classification and response preparation", "status": "active"},
+    "database": {"role": "database health, schema and data operations", "status": "active"},
+    "security": {"role": "application security analysis", "status": "active"},
+    "testing": {"role": "tests and regression verification", "status": "active"},
+    "verification": {"role": "critic, evidence and final verification", "status": "active"},
+    "monitoring": {"role": "application, backend, server and service health monitoring", "status": "active"}
+  },
+  "deferred_agents": {
+    "media": "disabled_for_phase_1",
+    "youtube": "disabled_for_phase_1",
+    "website_business": "disabled_for_phase_1",
+    "video_editing_business": "disabled_for_phase_1"
+  }
+}
