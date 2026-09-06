@@ -1,0 +1,14 @@
+{
+  "manager": true,
+  "llama_local": true,
+  "research_agent": true,
+  "coding_agent": true,
+  "media_agent": true,
+  "vector_memory": true,
+  "fastapi": true,
+  "web_research": true,
+  "android_control": true,
+  "arbitrary_shell": false,
+  "root_access": false,
+  "external_actions_require_approval": true
+}

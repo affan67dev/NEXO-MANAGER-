@@ -1,0 +1,16 @@
+requests
+psutil
+pydantic
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+beautifulsoup4
+lxml
+apscheduler
+aiohttp
+numpy
+agent-framework
+agent-governance-toolkit[full]
+chromadb
+aider-chat

@@ -1,0 +1,22 @@
+{
+  "web_search": {
+    "enabled": true,
+    "provider": "duckduckgo_html",
+    "timeout_seconds": 15,
+    "max_results": 5
+  },
+  "automation": {
+    "enabled": true,
+    "database": "data/memory.db",
+    "allow_arbitrary_shell": false,
+    "require_confirmation_for_sensitive_actions": true
+  },
+  "voice": {
+    "stt_enabled": false,
+    "tts_enabled": false,
+    "wake_word_enabled": false
+  },
+  "android": {
+    "enabled": false
+  }
+}

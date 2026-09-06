@@ -1,0 +1,29 @@
+NEXO MEMORY POLICY
+
+SAVE:
+- Long-term goals
+- Important projects
+- Stable preferences
+- Important technical decisions
+- Useful learning progress
+- Persistent instructions explicitly marked as important
+
+DO NOT SAVE:
+- Passwords
+- OTPs
+- API keys
+- Telegram tokens
+- Banking credentials
+- Card numbers
+- Private authentication secrets
+
+USUALLY IGNORE:
+- Random jokes
+- Temporary conversation
+- One-off calculations
+- Temporary device status
+- Casual events with no future value
+
+RULE:
+Memory must be useful for future conversations.
+Relevant memories should be retrieved selectively, not the entire database.

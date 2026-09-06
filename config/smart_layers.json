@@ -1,0 +1,13 @@
+{
+  "rag": true,
+  "local_memory": true,
+  "semantic_gatekeeper": true,
+  "personalized_memory": true,
+  "guardrails": true,
+  "verification_pipeline": true,
+  "voice_adapter": true,
+  "twilio_adapter": true,
+  "arbitrary_shell": false,
+  "root_access": false,
+  "external_message_send_requires_verification": true
+}
