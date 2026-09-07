@@ -1,0 +1,116 @@
+import os, json, urllib.request, asyncio
+from telegram import Update
+from telegram.ext import Application, MessageHandler, ContextTypes, filters
+import app_router
+
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+LLAMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
+
+SYSTEM_FILE = os.path.expanduser("~/NEXO/system_prompt.txt")
+if os.path.exists(SYSTEM_FILE):
+    SYSTEM = open(SYSTEM_FILE, encoding="utf-8").read()
+else:
+    SYSTEM = "You are NEXO, a safe application operations assistant."
+
+busy = set()
+history = {}
+MAX_HISTORY = 8
+
+
+def try_tool(text):
+    """Run only recognized safe NEXO app commands."""
+    try:
+        result = app_router.execute(text)
+
+        if isinstance(result, dict) and result.get("ok"):
+            command = result.get("command", {})
+            action = command.get("action")
+
+            if action in ("open", "search"):
+                return result
+
+        return None
+    except Exception:
+        return None
+
+
+def ask_llama(messages):
+    data = json.dumps({
+        "messages": messages,
+        "temperature": 0.15,
+        "max_tokens": 256,
+        "stream": False
+    }).encode()
+
+    req = urllib.request.Request(
+        LLAMA_URL,
+        data=data,
+        headers={"Content-Type": "application/json"}
+    )
+
+    with urllib.request.urlopen(req, timeout=180) as r:
+        result = json.loads(r.read())
+
+    return result["choices"][0]["message"]["content"].strip()
+
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if not text or user_id in busy:
+        return
+
+    busy.add(user_id)
+
+    try:
+        # FAST PATH: recognized app commands bypass Llama.
+        tool_result = try_tool(text)
+
+        if tool_result:
+            await update.message.reply_text(
+                tool_result.get("message", "Action completed.")
+            )
+            return
+
+        # COMPLEX/NORMAL CHAT → Llama
+        await update.message.chat.send_action("typing")
+
+        messages = [{"role": "system", "content": SYSTEM}]
+        messages += history.get(user_id, [])
+        messages.append({"role": "user", "content": text})
+
+        answer = await asyncio.to_thread(ask_llama, messages)
+
+        if not answer:
+            answer = "I couldn't generate a response."
+
+        history.setdefault(user_id, []).extend([
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": answer}
+        ])
+
+        history[user_id] = history[user_id][-MAX_HISTORY:]
+
+        await update.message.reply_text(answer)
+
+    except Exception as e:
+        print("NEXO ERROR:", repr(e))
+        await update.message.reply_text(
+            "Sorry, I couldn't complete that request right now."
+        )
+
+    finally:
+        busy.discard(user_id)
+
+
+app = Application.builder().token(TOKEN).build()
+app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, chat)
+)
+
+print("🤖 NEXO Telegram + Tool Router + Llama is running...")
+app.run_polling(drop_pending_updates=True)

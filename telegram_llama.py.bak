@@ -1,0 +1,73 @@
+import os, json, urllib.request, asyncio
+from telegram import Update
+from telegram.ext import Application, MessageHandler, ContextTypes, filters
+
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+URL = "http://127.0.0.1:8080/v1/chat/completions"
+SYSTEM = open(os.path.expanduser("~/system_prompt.txt"), encoding="utf-8").read()
+
+busy = set()
+history = {}
+MAX_HISTORY = 8
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if not text or user_id in busy:
+        return
+
+    busy.add(user_id)
+
+    try:
+        await update.message.chat.send_action("typing")
+
+        messages = [{"role": "system", "content": SYSTEM}]
+        messages += history.get(user_id, [])
+        messages.append({"role": "user", "content": text})
+
+        data = json.dumps({
+            "messages": messages,
+            "temperature": 0.15,
+            "max_tokens": 256,
+            "stream": False
+        }).encode()
+
+        req = urllib.request.Request(
+            URL,
+            data=data,
+            headers={"Content-Type": "application/json"}
+        )
+
+        with urllib.request.urlopen(req, timeout=180) as r:
+            result = json.loads(r.read())
+
+        answer = result["choices"][0]["message"]["content"].strip()
+
+        if not answer:
+            answer = "I couldn't generate a response."
+
+        history.setdefault(user_id, []).extend([
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": answer}
+        ])
+
+        history[user_id] = history[user_id][-MAX_HISTORY:]
+
+        await update.message.reply_text(answer)
+
+    except Exception:
+        await update.message.reply_text(
+            "Sorry, I couldn't complete that request right now."
+        )
+    finally:
+        busy.discard(user_id)
+
+app = Application.builder().token(TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+
+print("🤖 NEXO Smart Telegram Bot is running...")
+app.run_polling(drop_pending_updates=True)
