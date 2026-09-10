@@ -5,6 +5,7 @@ fastapi
 uvicorn[standard]
 httpx
 python-dotenv
+python-telegram-bot>=22,<23
 beautifulsoup4
 lxml
 apscheduler
