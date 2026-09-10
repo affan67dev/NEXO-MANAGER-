@@ -15,3 +15,6 @@ agent-framework
 agent-governance-toolkit[full]
 chromadb
 aider-chat
+pypdf
+Pillow
+pytesseract
