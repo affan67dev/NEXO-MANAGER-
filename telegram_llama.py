@@ -38,16 +38,49 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("nexo.telegram")
 planner = ExecutivePlanner(LLAMA_URL)
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_SYSTEM_CHARS = 6500
+MAX_MEMORY_CHARS = 1000
+MAX_TURNS_CHARS = 2000
+MAX_TURN_CHARS = 700
+MAX_GOAL_CHARS = 2000
 
 
 def is_owner(user_id: int) -> bool:
     return OWNER_TELEGRAM_USER_ID is not None and user_id == OWNER_TELEGRAM_USER_ID
 
 
+def _clip(text: str, limit: int) -> str:
+    return (text or "")[:limit]
+
+
+def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str) -> list[dict[str, str]]:
+    system = SYSTEM
+    if len(system) > MAX_SYSTEM_CHARS:
+        system = system[:MAX_SYSTEM_CHARS - 500] + "\n[system prompt compacted for local context safety]\n" + system[-500:]
+    system += "\n\nRelevant long-term memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
+
+    selected: list[tuple[str, str]] = []
+    used = 0
+    for role, content in reversed(turns):
+        item = (role, _clip(content, MAX_TURN_CHARS))
+        cost = len(item[1])
+        if used + cost > MAX_TURNS_CHARS:
+            break
+        selected.append(item)
+        used += cost
+    selected.reverse()
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    messages.extend({"role": role, "content": content} for role, content in selected)
+    messages.append({"role": "user", "content": _clip(goal, MAX_GOAL_CHARS)})
+    return messages
+
+
 async def typing_heartbeat(update: Update):
     try:
         while True:
-            await update.message.chat.send_action("typing")
+            if update.message:
+                await update.message.chat.send_action("typing")
             await asyncio.sleep(4)
     except asyncio.CancelledError:
         return
@@ -61,18 +94,29 @@ async def daily_briefing() -> None:
     await app.bot.send_message(chat_id=OWNER_TELEGRAM_USER_ID, text="NEXO daily briefing: runtime scheduler is active. Use system_health for recent runtime errors.")
 
 
+async def daily_maintenance() -> None:
+    try:
+        await asyncio.to_thread(prune_old_sessions)
+    except Exception:
+        logger.exception("scheduled session pruning failed")
+
+
 async def handle_attachment(update: Update) -> str | None:
     message = update.message
     if not message:
         return None
-    item = message.document or (message.photo[-1] if message.photo else None)
+    is_photo = bool(message.photo)
+    item = message.document or (message.photo[-1] if is_photo else None)
     if not item:
         return None
     size = getattr(item, "file_size", None)
     if size is not None and size > MAX_ATTACHMENT_BYTES:
         return "That file is too large for this device. Please send a smaller file."
     file = await item.get_file()
-    suffix = Path(getattr(item, "file_name", "attachment.bin") or "attachment.bin").suffix
+    if is_photo:
+        suffix = ".jpg"
+    else:
+        suffix = Path(getattr(item, "file_name", "attachment.bin") or "attachment.bin").suffix
     with tempfile.NamedTemporaryFile(prefix="nexo_", suffix=suffix, delete=False) as tmp:
         path = tmp.name
     try:
@@ -82,8 +126,10 @@ async def handle_attachment(update: Update) -> str | None:
             return f"I received the file, but local parsing is unavailable: {parsed.get('error','unknown_error')}"
         text = parsed.get("text", "")
         if text:
-            memory.add(text[:12000], "document", 4, "telegram_attachment")
-        return "File parsed locally and useful extracted text was added to semantic memory." if text else "File received, but no text could be extracted locally."
+            if not memory.add(text[:12000], "document", 4, "telegram_attachment"):
+                return "File parsed locally, but the extracted content was not eligible for long-term memory."
+            return "File parsed locally and useful extracted text was added to semantic memory."
+        return "File received, but no text could be extracted locally."
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -132,8 +178,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         turns = recent_turns(session_id, limit=8)
         memories = memory.search(text, limit=4)
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
-        messages: list[dict[str, Any]] = [{"role":"system","content":SYSTEM + "\n\nRelevant long-term memory:\n" + memory_text}]
-        messages.extend({"role": role, "content": content} for role, content in turns)
+        messages = build_llm_messages(text, turns, memory_text)
         answer = await asyncio.to_thread(planner.run, text, messages, schemas(), execute_tool, owner=is_owner(user.id), max_steps=6)
         save_turn(session_id, user.id, "user", text)
         save_turn(session_id, user.id, "assistant", answer)
@@ -144,10 +189,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         typing_task.cancel()
         await load_guard.release()
-        try:
-            prune_old_sessions()
-        except Exception:
-            logger.exception("session pruning failed")
 
 
 if not TOKEN:
@@ -156,6 +197,6 @@ if not TOKEN:
 app = Application.builder().token(TOKEN).build()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-scheduler.start(daily_briefing)
+scheduler.start(daily_briefing, daily_maintenance)
 logger.info("NEXO unified Telegram runtime starting")
 app.run_polling(drop_pending_updates=True)
