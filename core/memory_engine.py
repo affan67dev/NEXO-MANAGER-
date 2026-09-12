@@ -36,6 +36,10 @@ def _connect() -> Iterator[sqlite3.Connection]:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -43,7 +47,7 @@ def _connect() -> Iterator[sqlite3.Connection]:
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,last_activity TEXT NOT NULL,created_at TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS conversation_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-    conn.execute("CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,updated_at TEXT DEFAULT CURRENT_TIMESTAMP,source TEXT NOT NULL DEFAULT 'conversation')")
+    conn.execute("CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,source TEXT NOT NULL DEFAULT 'conversation',updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
     if "user_id" not in columns:
         conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
