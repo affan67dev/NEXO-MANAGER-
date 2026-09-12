@@ -21,6 +21,11 @@ DB = REPO / "data" / "memory.db"
 PM2_NAMES = ("nexo-backend", "nexo-llama")
 
 
+def is_termux() -> bool:
+    prefix = os.getenv("PREFIX", "").strip()
+    return bool(prefix) and Path(prefix).is_dir()
+
+
 def run(cmd: list[str], check: bool = False, timeout: int = 15) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, timeout=timeout)
 
@@ -51,7 +56,7 @@ def hardware() -> dict[str, object]:
     info: dict[str, object] = {
         "os": platform.system(), "release": platform.release(), "machine": platform.machine(),
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
-        "ram_bytes": _detect_ram_bytes(), "gpu": [],
+        "ram_bytes": _detect_ram_bytes(), "gpu": [], "termux": is_termux(),
     }
     probes: list[list[str]] = []
     if shutil.which("nvidia-smi"):
@@ -104,7 +109,7 @@ def find_model() -> str | None:
     if configured and configured.lower().endswith(".gguf"):
         return configured
     roots = [REPO / "models", Path.home() / "models"]
-    if os.getenv("PREFIX"):
+    if is_termux():
         roots.append(Path("/sdcard/Download"))
     # Deliberately non-recursive: scanning all shared storage is expensive on phones.
     for root in roots:
@@ -140,11 +145,17 @@ def ensure_venv() -> Path:
     return python_path
 
 
+def setup_python() -> tuple[Path, bool]:
+    if sys.version_info < (3, 10):
+        raise RuntimeError("Python 3.10+ is required")
+    # Android/Termux already has an established production runtime. Never create a
+    # second venv or reinstall packages there as part of the desktop bootstrap.
+    if is_termux():
+        return Path(sys.executable).resolve(), False
+    return ensure_venv(), True
+
+
 def dependency_manifest() -> Path:
-    if os.getenv("PREFIX"):
-        termux = REPO / "requirements-nexo-termux.txt"
-        if termux.is_file():
-            return termux
     manifest = REPO / "requirements-nexo.txt"
     if not manifest.is_file():
         raise RuntimeError("requirements-nexo.txt is missing")
@@ -191,7 +202,7 @@ def wizard() -> str:
 
 
 def desktop_shortcut() -> bool:
-    if platform.system() != "Linux":
+    if platform.system() != "Linux" or is_termux():
         return False
     desktop = Path(os.getenv("XDG_DESKTOP_DIR", str(Path.home() / "Desktop")))
     if not desktop.is_dir():
@@ -199,7 +210,7 @@ def desktop_shortcut() -> bool:
     target = desktop / "NEXO.desktop"
     content = (
         "[Desktop Entry]\nType=Application\nName=NEXO\nTerminal=true\n"
-        f"Exec={REPO / 'bootstrap.sh'}\nPath={REPO}\n"
+        f"Exec=\"{REPO / 'bootstrap.sh'}\"\nPath={REPO}\n"
     )
     if target.exists():
         try:
@@ -225,19 +236,20 @@ def main() -> int:
         llama = find_llama()
         model = find_model()
         init_sqlite()
-        py = ensure_venv()
+        py, owns_venv = setup_python()
         manifest = dependency_manifest()
-        installed = False if args.no_install else install_dependencies(py, manifest)
-        profile = wizard() if args.wizard else "personal"
-        shortcut = desktop_shortcut() if args.desktop_shortcut else False
+        installed = False if args.no_install or not owns_venv else install_dependencies(py, manifest)
+        profile = wizard() if args.wizard and not is_termux() else "personal"
+        shortcut = desktop_shortcut() if args.desktop_shortcut and not is_termux() else False
         STATE.mkdir(parents=True, exist_ok=True)
         data = {
-            "schema_version": 2, "repo": str(REPO), "hardware": hw,
-            "python": {"executable": str(py), "venv": str(VENV)},
+            "schema_version": 3, "repo": str(REPO), "hardware": hw,
+            "python": {"executable": str(py), "venv": str(VENV) if owns_venv else None},
             "dependency_manifest": str(manifest), "dependencies_changed": installed,
             "llama_server": llama, "model": model,
             "telegram_env_file": str(ENV_FILE) if ENV_FILE.exists() else None,
-            "pm2": detect_pm2(), "profile": profile, "desktop_shortcut": shortcut,
+            "pm2": detect_pm2() if is_termux() else {"available": False, "processes": {}},
+            "profile": profile, "desktop_shortcut": shortcut,
         }
         tmp = CONFIG.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -247,6 +259,7 @@ def main() -> int:
         return 1
     print("NEXO bootstrap: PASS")
     print(f"Platform: {hw['os']} / {hw['machine']}")
+    print(f"Android/Termux mode: {is_termux()}")
     print(f"Python environment: {py}")
     print(f"SQLite: {DB}")
     print(f"Dependency manifest: {manifest}")
@@ -254,7 +267,7 @@ def main() -> int:
     print(f"llama-server: {llama or 'not detected; existing install preserved'}")
     print(f"GGUF model: {model or 'not detected; configure NEXO_MODEL_PATH when available'}")
     print(f"Telegram config: {'detected' if ENV_FILE.exists() else 'not configured'}")
-    print(f"PM2: {detect_pm2()}")
+    print(f"PM2: {detect_pm2() if is_termux() else 'desktop runtime managed separately'}")
     print(f"Setup state: {CONFIG}")
     return 0
 
