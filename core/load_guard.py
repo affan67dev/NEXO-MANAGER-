@@ -40,9 +40,8 @@ class LoadGuard:
 
             self._last_request[user_id] = now
             if len(self._last_request) > MAX_TRACKED_USERS:
-                cutoff = now - self.per_user_interval
-                stale = [uid for uid, stamp in self._last_request.items() if stamp < cutoff]
-                for uid in stale[: len(stale) - MAX_TRACKED_USERS // 2 if len(stale) > MAX_TRACKED_USERS // 2 else len(stale)]:
+                stale = sorted(self._last_request.items(), key=lambda item: item[1])
+                for uid, _stamp in stale[:MAX_TRACKED_USERS // 2]:
                     self._last_request.pop(uid, None)
             self._queued += 1
 
