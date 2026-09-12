@@ -43,6 +43,8 @@ MAX_MEMORY_CHARS = 1000
 MAX_TURNS_CHARS = 2000
 MAX_TURN_CHARS = 700
 MAX_GOAL_CHARS = 2000
+MAX_UPDATE_QUEUE = 20
+app: Application | None = None
 
 
 def is_owner(user_id: int) -> bool:
@@ -89,7 +91,7 @@ async def typing_heartbeat(update: Update):
 
 
 async def daily_briefing() -> None:
-    if OWNER_TELEGRAM_USER_ID is None:
+    if OWNER_TELEGRAM_USER_ID is None or app is None:
         return
     await app.bot.send_message(chat_id=OWNER_TELEGRAM_USER_ID, text="NEXO daily briefing: runtime scheduler is active. Use system_health for recent runtime errors.")
 
@@ -113,10 +115,7 @@ async def handle_attachment(update: Update) -> str | None:
     if size is not None and size > MAX_ATTACHMENT_BYTES:
         return "That file is too large for this device. Please send a smaller file."
     file = await item.get_file()
-    if is_photo:
-        suffix = ".jpg"
-    else:
-        suffix = Path(getattr(item, "file_name", "attachment.bin") or "attachment.bin").suffix
+    suffix = ".jpg" if is_photo else Path(getattr(item, "file_name", "attachment.bin") or "attachment.bin").suffix
     with tempfile.NamedTemporaryFile(prefix="nexo_", suffix=suffix, delete=False) as tmp:
         path = tmp.name
     try:
@@ -191,12 +190,23 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await load_guard.release()
 
 
-if not TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+def main() -> None:
+    global app
+    if not TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .concurrent_updates(False)
+        .update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE))
+        .build()
+    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
+    scheduler.start(daily_briefing, daily_maintenance)
+    logger.info("NEXO unified Telegram runtime starting")
+    app.run_polling(drop_pending_updates=True)
 
-app = Application.builder().token(TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-scheduler.start(daily_briefing, daily_maintenance)
-logger.info("NEXO unified Telegram runtime starting")
-app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
