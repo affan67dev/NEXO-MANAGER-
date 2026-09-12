@@ -1,6 +1,8 @@
 import importlib.util
+import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("nexo_bootstrap", ROOT / "scripts" / "bootstrap_nexo.py")
@@ -19,6 +21,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("machine", info)
         self.assertGreaterEqual(info["cpu_count"], 1)
         self.assertIsInstance(info["gpu"], list)
+        self.assertIn("termux", info)
 
     def test_secret_boundary(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
@@ -34,15 +37,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertTrue(str(MOD.VENV).startswith(str(Path.home() / ".nexo")))
         self.assertNotIn(str(ROOT), str(MOD.VENV))
 
+    def test_termux_does_not_create_second_runtime(self):
+        with patch.dict(os.environ, {"PREFIX": str(Path.home())}, clear=False):
+            python_path, owns_venv = MOD.setup_python()
+        self.assertEqual(python_path, Path(MOD.sys.executable).resolve())
+        self.assertFalse(owns_venv)
+
     def test_db_matches_existing_memory_engine(self):
         source = (ROOT / "core" / "memory_engine.py").read_text(encoding="utf-8")
         self.assertIn('DB = BASE / "data" / "memory.db"', source)
         self.assertEqual(MOD.DB, ROOT / "data" / "memory.db")
 
-    def test_dependency_manifest_has_termux_fallback(self):
-        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
-        self.assertIn("requirements-nexo-termux.txt", source)
-        self.assertIn("requirements-nexo.txt", source)
+    def test_dependency_manifest_is_shared_repo_manifest(self):
+        self.assertEqual(MOD.dependency_manifest(), ROOT / "requirements-nexo.txt")
 
     def test_no_destructive_git_operations(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
