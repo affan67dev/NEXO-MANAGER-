@@ -18,6 +18,9 @@ SECRET_PATTERNS = [
     r"\bprivate[_ -]?key\s*[:=]\s*\S+",
     r"\bcard[_ -]?number\s*[:=]\s*\S+",
     r"\bbearer\s+[A-Za-z0-9._~-]+",
+    r"\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b",
+    r"\b(?:ghp_|github_pat_|gsk_|AIza)[A-Za-z0-9_-]{16,}\b",
+    r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b",
 ]
 SESSION_TIMEOUT_MINUTES = 60
 MAX_MEMORY_CHARS = 12000
