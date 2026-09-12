@@ -32,6 +32,7 @@ jobs:
           bash -n scripts/auto_update.sh
           bash -n scripts/bootstrap_nexo_deploy.sh
       - name: Runtime import check
-        run: python -c "import telegram_llama; print('telegram runtime import: PASS')"
+        run: >-
+          python -c "import telegram_llama; print('telegram runtime import: PASS')"
       - name: Core unit tests
         run: python -m unittest discover -s tests -v
