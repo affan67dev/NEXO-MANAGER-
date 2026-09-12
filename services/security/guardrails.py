@@ -3,9 +3,13 @@ from __future__ import annotations
 import re
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)\b(api[_-]?key|secret|token|password)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(api[_-]?key|secret|token|password|otp)\s*[:=]\s*\S+"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~-]+"),
     re.compile(r"(?i)-----BEGIN(?: [A-Z]+)* PRIVATE KEY-----"),
+    re.compile(r"(?i)\b(card[_ -]?number|authorization)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?i)\b(?:ghp_|github_pat_|gsk_|AIza)[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b"),
 ]
 
 BLOCKED_ACTIONS = {
