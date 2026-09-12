@@ -14,7 +14,7 @@ def _positive_int(name: str, default: int) -> int:
 
 
 class LLMRouter:
-    """Select an already-running LLM endpoint without starting or loading models."""
+    """Select already-running LLM endpoints; never starts or loads a model."""
 
     def __init__(self, primary_url: str):
         self.primary_url = primary_url
@@ -32,18 +32,20 @@ class LLMRouter:
         return len(str(goal)) >= self.complexity_chars or total_chars >= self.complexity_chars * 2
 
     def call(self, goal: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, ask_fn: Callable[..., dict[str, Any]]) -> dict[str, Any]:
-        secondary_first = self.should_use_secondary(goal, messages)
-        urls = [self.secondary_url, self.primary_url] if secondary_first else [self.primary_url, self.secondary_url]
+        if self.should_use_secondary(goal, messages):
+            urls = [self.secondary_url, self.primary_url]
+        else:
+            urls = [self.primary_url, self.secondary_url]
+
         last_error: Exception | None = None
-        for index, url in enumerate(urls):
-            if not url or (index == 1 and url == self.primary_url and secondary_first is False and not self._secondary_available()):
+        for url in urls:
+            if not url or (url == self.secondary_url and not self._secondary_available()):
                 continue
             try:
                 return ask_fn(url, messages, tools)
             except Exception as exc:
                 last_error = exc
-                if index == 0 and len(urls) > 1:
-                    continue
+
         if last_error is not None:
             raise last_error
         raise RuntimeError("no_llm_endpoint_configured")
