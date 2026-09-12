@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -14,6 +13,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
+from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.semantic_memory import memory
 from services.document_parser import extract_text
@@ -36,11 +36,13 @@ LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
 logger = logging.getLogger("nexo.telegram")
-busy: set[int] = set()
 planner = ExecutivePlanner(LLAMA_URL)
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+
 
 def is_owner(user_id: int) -> bool:
     return OWNER_TELEGRAM_USER_ID is not None and user_id == OWNER_TELEGRAM_USER_ID
+
 
 async def typing_heartbeat(update: Update):
     try:
@@ -52,10 +54,12 @@ async def typing_heartbeat(update: Update):
     except Exception:
         logger.exception("typing indicator failed")
 
+
 async def daily_briefing() -> None:
     if OWNER_TELEGRAM_USER_ID is None:
         return
     await app.bot.send_message(chat_id=OWNER_TELEGRAM_USER_ID, text="NEXO daily briefing: runtime scheduler is active. Use system_health for recent runtime errors.")
+
 
 async def handle_attachment(update: Update) -> str | None:
     message = update.message
@@ -64,6 +68,9 @@ async def handle_attachment(update: Update) -> str | None:
     item = message.document or (message.photo[-1] if message.photo else None)
     if not item:
         return None
+    size = getattr(item, "file_size", None)
+    if size is not None and size > MAX_ATTACHMENT_BYTES:
+        return "That file is too large for this device. Please send a smaller file."
     file = await item.get_file()
     suffix = Path(getattr(item, "file_name", "attachment.bin") or "attachment.bin").suffix
     with tempfile.NamedTemporaryFile(prefix="nexo_", suffix=suffix, delete=False) as tmp:
@@ -80,34 +87,47 @@ async def handle_attachment(update: Update) -> str | None:
     finally:
         Path(path).unlink(missing_ok=True)
 
+
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     user = update.effective_user
     if user is None:
         return
-    attachment_result = await handle_attachment(update)
-    if attachment_result:
-        await update.message.reply_text(attachment_result)
+
+    admitted, reason = await load_guard.acquire(user.id)
+    if not admitted:
+        messages = {
+            "rate_limited": "Please wait a moment before sending another request.",
+            "overloaded": "NEXO is busy right now. Please try again shortly.",
+            "queue_timeout": "NEXO is under heavy load. Please try again shortly.",
+        }
+        await update.message.reply_text(messages.get(reason, "NEXO is temporarily busy. Please try again shortly."))
         return
-    text = (update.message.text or "").strip()
-    if not text or user.id in busy:
-        return
-    gate = inspect_input(text)
-    if not gate.get("allow"):
-        await update.message.reply_text("I can't process that request.")
-        return
-    security = inspect_security(text)
-    if not security.get("safe"):
-        await update.message.reply_text("I can't process that request because it contains restricted information or an unsafe action.")
-        return
-    policy = inspect_request(text, user.id, OWNER_TELEGRAM_USER_ID)
-    if not policy["safe"]:
-        await update.message.reply_text("I can't treat that request as trusted instructions.")
-        return
-    busy.add(user.id)
+
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
+        attachment_result = await handle_attachment(update)
+        if attachment_result:
+            await update.message.reply_text(attachment_result)
+            return
+
+        text = (update.message.text or "").strip()
+        if not text:
+            return
+        gate = inspect_input(text)
+        if not gate.get("allow"):
+            await update.message.reply_text("I can't process that request.")
+            return
+        security = inspect_security(text)
+        if not security.get("safe"):
+            await update.message.reply_text("I can't process that request because it contains restricted information or an unsafe action.")
+            return
+        policy = inspect_request(text, user.id, OWNER_TELEGRAM_USER_ID)
+        if not policy["safe"]:
+            await update.message.reply_text("I can't treat that request as trusted instructions.")
+            return
+
         session_id = get_or_create_session(user.id)
         turns = recent_turns(session_id, limit=8)
         memories = memory.search(text, limit=4)
@@ -123,11 +143,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Sorry, I couldn't complete that request right now.")
     finally:
         typing_task.cancel()
-        busy.discard(user.id)
+        await load_guard.release()
         try:
             prune_old_sessions()
         except Exception:
             logger.exception("session pruning failed")
+
 
 if not TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
