@@ -21,21 +21,38 @@ DB = REPO / "data" / "memory.db"
 PM2_NAMES = ("nexo-backend", "nexo-llama")
 
 
-def run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check)
+def run(cmd: list[str], check: bool = False, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, timeout=timeout)
+
+
+def _detect_ram_bytes() -> int | None:
+    try:
+        import psutil
+        return int(psutil.virtual_memory().total)
+    except Exception:
+        pass
+    try:
+        if Path("/proc/meminfo").is_file():
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    if platform.system() == "Darwin" and shutil.which("sysctl"):
+        try:
+            result = subprocess.run(["sysctl", "-n", "hw.memsize"], text=True, capture_output=True, timeout=5)
+            return int(result.stdout.strip())
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    return None
 
 
 def hardware() -> dict[str, object]:
     info: dict[str, object] = {
         "os": platform.system(), "release": platform.release(), "machine": platform.machine(),
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
-        "ram_bytes": None, "gpu": [],
+        "ram_bytes": _detect_ram_bytes(), "gpu": [],
     }
-    try:
-        import psutil
-        info["ram_bytes"] = int(psutil.virtual_memory().total)
-    except Exception:
-        pass
     probes: list[list[str]] = []
     if shutil.which("nvidia-smi"):
         probes.append(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
@@ -50,7 +67,7 @@ def hardware() -> dict[str, object]:
             result = run(cmd)
             if result.returncode == 0:
                 info["gpu"] += [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             pass
     info["gpu"] = info["gpu"][:8]
     return info
@@ -112,6 +129,8 @@ def init_sqlite() -> None:
 
 
 def ensure_venv() -> Path:
+    if sys.version_info < (3, 10):
+        raise RuntimeError("Python 3.10+ is required")
     python_path = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not python_path.exists():
         VENV.mkdir(parents=True, exist_ok=True)
@@ -159,7 +178,7 @@ def detect_pm2() -> dict[str, object]:
     for name in PM2_NAMES:
         try:
             result["processes"][name] = run([pm2, "describe", name]).returncode == 0
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             result["processes"][name] = False
     return result
 
@@ -178,11 +197,16 @@ def desktop_shortcut() -> bool:
     if not desktop.is_dir():
         return False
     target = desktop / "NEXO.desktop"
-    target.write_text(
+    content = (
         "[Desktop Entry]\nType=Application\nName=NEXO\nTerminal=true\n"
-        f"Exec={REPO / 'bootstrap.sh'}\nPath={REPO}\n",
-        encoding="utf-8",
+        f"Exec={REPO / 'bootstrap.sh'}\nPath={REPO}\n"
     )
+    if target.exists():
+        try:
+            return target.read_text(encoding="utf-8") == content
+        except OSError:
+            return False
+    target.write_text(content, encoding="utf-8")
     target.chmod(0o755)
     return True
 
@@ -193,7 +217,6 @@ def main() -> int:
     parser.add_argument("--wizard", action="store_true")
     parser.add_argument("--desktop-shortcut", action="store_true")
     args = parser.parse_args()
-
     if not (REPO / ".git").exists():
         print("ERROR: run from a NEXO checkout", file=sys.stderr)
         return 2
@@ -222,7 +245,6 @@ def main() -> int:
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"ERROR: bootstrap failed: {exc}", file=sys.stderr)
         return 1
-
     print("NEXO bootstrap: PASS")
     print(f"Platform: {hw['os']} / {hw['machine']}")
     print(f"Python environment: {py}")
