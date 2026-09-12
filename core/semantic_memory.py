@@ -22,6 +22,7 @@ SECRET_PATTERNS = (
 )
 MAX_CONTENT_CHARS = 12000
 
+
 @contextmanager
 def _conn() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB, timeout=10)
@@ -30,6 +31,10 @@ def _conn() -> Iterator[sqlite3.Connection]:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
