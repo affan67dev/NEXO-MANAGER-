@@ -20,6 +20,7 @@ SECRET_PATTERNS = [
     r"\bbearer\s+[A-Za-z0-9._~-]+",
 ]
 SESSION_TIMEOUT_MINUTES = 60
+MAX_MEMORY_CHARS = 12000
 
 
 def _connect() -> sqlite3.Connection:
@@ -34,9 +35,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,last_activity TEXT NOT NULL,created_at TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS conversation_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     conn.execute("CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,source TEXT NOT NULL DEFAULT 'conversation',updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_session ON conversation_messages(session_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversation_messages(user_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_session_activity ON sessions(last_activity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_user ON memories(user_id,importance,id)")
     conn.commit()
 
 
@@ -45,25 +50,28 @@ def looks_sensitive(text: str) -> bool:
     return any(re.search(pattern, value, re.I) for pattern in SECRET_PATTERNS)
 
 
-def save_memory(category, content, importance=5, source="conversation"):
-    if not content or looks_sensitive(content):
+def save_memory(category, content, importance=5, source="conversation", user_id: int | str | None = None):
+    content = str(content or "").strip()
+    if not content or len(content) > MAX_MEMORY_CHARS or looks_sensitive(content):
         return False
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            conn.execute("INSERT INTO memories(category,content,importance,source) VALUES(?,?,?,?)", (str(category), str(content), int(importance), str(source)))
+            conn.execute("INSERT INTO memories(category,content,importance,source,user_id) VALUES(?,?,?,?,?)", (str(category), content, max(1, min(int(importance), 10)), str(source), str(user_id or "")))
         return True
     except sqlite3.Error:
         return False
 
 
-def search_memory(keyword, limit=5):
+def search_memory(keyword, limit=5, user_id: int | str | None = None):
+    keyword = str(keyword or "").strip()
     if not keyword:
         return []
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            return conn.execute("SELECT category,content,importance FROM memories WHERE content LIKE ? ORDER BY importance DESC,updated_at DESC LIMIT ?", (f"%{keyword}%", int(limit))).fetchall()
+            uid = str(user_id or "")
+            return conn.execute("SELECT category,content,importance FROM memories WHERE user_id=? AND content LIKE ? ORDER BY importance DESC,updated_at DESC LIMIT ?", (uid, f"%{keyword}%", max(1, min(int(limit), 10)))).fetchall()
     except sqlite3.Error:
         return []
 
@@ -110,7 +118,7 @@ def recent_turns(session_id: str, limit: int = 8):
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            rows = conn.execute("SELECT role,content FROM conversation_messages WHERE session_id=? ORDER BY id DESC LIMIT ?", (session_id, int(limit))).fetchall()
+            rows = conn.execute("SELECT role,content FROM conversation_messages WHERE session_id=? ORDER BY id DESC LIMIT ?", (session_id, max(1, min(int(limit), 8)))).fetchall()
         return list(reversed(rows))
     except sqlite3.Error:
         return []
