@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from services.llm_router import LLMRouter
+
 LLAMA_TIMEOUT_SECONDS = 75
 DEFAULT_MAX_TOKENS = 384
 MAX_TOOL_CALLS_PER_RUN = 6
@@ -32,14 +34,15 @@ def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | 
 class ExecutivePlanner:
     def __init__(self, llama_url: str):
         self.llama_url = llama_url
+        self.router = LLMRouter(llama_url)
 
     def run(self, goal: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]], executor, owner: bool, user_id: int | str | None = None, max_steps: int = 6) -> str:
+        # The caller already supplies the final user message. Do not append it again.
         working = list(messages)
-        working.append({"role": "user", "content": str(goal)[:2000]})
         tool_calls_used = 0
 
         for _ in range(max(1, min(int(max_steps), 6))):
-            result = ask(self.llama_url, working, tools)
+            result = self.router.call(goal, working, tools, ask)
             msg = (result.get("choices") or [{}])[0].get("message") or {}
             if not isinstance(msg, dict):
                 return "I couldn't produce a valid result."
@@ -67,7 +70,6 @@ class ExecutivePlanner:
                         try:
                             outcome = executor(name, args, owner=owner, user_id=user_id)
                         except TypeError:
-                            # Compatibility for simple test/custom executors that do not accept user_id.
                             try:
                                 outcome = executor(name, args, owner=owner)
                             except Exception:

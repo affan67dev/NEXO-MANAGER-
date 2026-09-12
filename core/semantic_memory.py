@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "data" / "memory.db"
@@ -21,18 +22,21 @@ SECRET_PATTERNS = (
 )
 MAX_CONTENT_CHARS = 12000
 
-try:
-    import chromadb
-except Exception:
-    chromadb = None
 
-
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(DB, timeout=10)
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA journal_mode=WAL")
-    c.execute("PRAGMA busy_timeout=10000")
-    return c
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(DB, timeout=10)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _schema(c: sqlite3.Connection) -> None:
@@ -53,6 +57,10 @@ class SemanticMemory:
     def __init__(self) -> None:
         self.client = None
         self.collection = None
+        try:
+            import chromadb
+        except Exception:
+            chromadb = None
         if chromadb is not None:
             try:
                 path = str(BASE / "data" / "chroma")

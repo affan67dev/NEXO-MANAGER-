@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import core.memory_engine as memory_engine
 import core.semantic_memory as semantic_memory
@@ -56,6 +57,18 @@ class StabilityTests(unittest.TestCase):
             finally:
                 memory_engine.DB = old_core
                 semantic_memory.DB = old_semantic
+
+    def test_planner_does_not_duplicate_user_message(self):
+        from agents.executive_planner import ExecutivePlanner
+
+        seen = []
+        with patch("agents.executive_planner.LLMRouter.call", side_effect=lambda goal, messages, tools, ask_fn: seen.append(messages) or {"choices": [{"message": {"content": "ok"}}]}):
+            answer = ExecutivePlanner("http://llama").run(
+                "hello", [{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}], [], lambda *a, **k: {}, owner=False
+            )
+        self.assertEqual(answer, "ok")
+        self.assertEqual([m["role"] for m in seen[0]], ["system", "user"])
+        self.assertEqual(seen[0][-1]["content"], "hello")
 
 
 if __name__ == "__main__":
