@@ -8,6 +8,7 @@ MOD = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MOD)
 
+
 class BootstrapTests(unittest.TestCase):
     def test_wrappers_exist(self):
         self.assertTrue((ROOT / "bootstrap.sh").is_file())
@@ -26,10 +27,32 @@ class BootstrapTests(unittest.TestCase):
 
     def test_pm2_boundary(self):
         self.assertEqual(MOD.PM2_NAMES, ("nexo-backend", "nexo-llama"))
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        self.assertNotIn("omnix-backend", source.lower())
+
+    def test_venv_is_outside_repository(self):
+        self.assertTrue(str(MOD.VENV).startswith(str(Path.home() / ".nexo")))
+        self.assertNotIn(str(ROOT), str(MOD.VENV))
+
+    def test_db_matches_existing_memory_engine(self):
+        source = (ROOT / "core" / "memory_engine.py").read_text(encoding="utf-8")
+        self.assertIn('DB = BASE / "data" / "memory.db"', source)
+        self.assertEqual(MOD.DB, ROOT / "data" / "memory.db")
+
+    def test_dependency_manifest_has_termux_fallback(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        self.assertIn("requirements-nexo-termux.txt", source)
+        self.assertIn("requirements-nexo.txt", source)
+
+    def test_no_destructive_git_operations(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        for forbidden in ("git reset --hard", "git clean", "git push --force", "git checkout -f"):
+            self.assertNotIn(forbidden, source)
 
     def test_model_detection_is_optional(self):
         value = MOD.find_model()
-        self.assertTrue(value is None or value.endswith(".gguf"))
+        self.assertTrue(value is None or value.lower().endswith(".gguf"))
+
 
 if __name__ == "__main__":
     unittest.main()
