@@ -12,8 +12,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,10 +28,12 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q .
       - name: Bootstrap wrapper syntax
+        shell: bash
         run: |
           bash -n bootstrap.sh
           python scripts/bootstrap_nexo.py --help
       - name: Shell deployment script syntax
+        shell: bash
         run: |
           bash -n scripts/auto_update.sh
           bash -n scripts/bootstrap_nexo_deploy.sh
