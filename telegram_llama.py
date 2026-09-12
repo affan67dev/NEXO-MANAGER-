@@ -103,7 +103,7 @@ async def daily_maintenance() -> None:
         logger.exception("scheduled session pruning failed")
 
 
-async def handle_attachment(update: Update) -> str | None:
+async def handle_attachment(update: Update, user_id: int) -> str | None:
     message = update.message
     if not message:
         return None
@@ -125,7 +125,7 @@ async def handle_attachment(update: Update) -> str | None:
             return f"I received the file, but local parsing is unavailable: {parsed.get('error','unknown_error')}"
         text = parsed.get("text", "")
         if text:
-            if not memory.add(text[:12000], "document", 4, "telegram_attachment"):
+            if not memory.add(text[:12000], "document", 4, "telegram_attachment", user_id=user_id):
                 return "File parsed locally, but the extracted content was not eligible for long-term memory."
             return "File parsed locally and useful extracted text was added to semantic memory."
         return "File received, but no text could be extracted locally."
@@ -152,7 +152,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
-        attachment_result = await handle_attachment(update)
+        attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
             return
@@ -175,10 +175,10 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         session_id = get_or_create_session(user.id)
         turns = recent_turns(session_id, limit=8)
-        memories = memory.search(text, limit=4)
+        memories = memory.search(text, limit=4, user_id=user.id)
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
         messages = build_llm_messages(text, turns, memory_text)
-        answer = await asyncio.to_thread(planner.run, text, messages, schemas(), execute_tool, owner=is_owner(user.id), max_steps=6)
+        answer = await asyncio.to_thread(planner.run, text, messages, schemas(), execute_tool, owner=is_owner(user.id), user_id=user.id, max_steps=6)
         save_turn(session_id, user.id, "user", text)
         save_turn(session_id, user.id, "assistant", answer)
         await update.message.reply_text(answer[:4000])
