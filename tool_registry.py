@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -53,8 +54,7 @@ def _validate_arguments(tool: Tool, arguments: dict[str, Any]) -> str | None:
     required = schema.get("required") or []
     if not isinstance(properties, dict) or not isinstance(required, list):
         return "invalid_tool_schema"
-    missing = [name for name in required if name not in arguments]
-    if missing:
+    if any(name not in arguments for name in required):
         return "missing_required_argument"
     if schema.get("additionalProperties") is False:
         unexpected = set(arguments) - set(properties)
@@ -90,7 +90,7 @@ def _validate_arguments(tool: Tool, arguments: dict[str, Any]) -> str | None:
     return None
 
 
-def execute(name: str, arguments: dict[str, Any], *, owner: bool) -> dict[str, Any]:
+def execute(name: str, arguments: dict[str, Any], *, owner: bool, user_id: int | str | None = None) -> dict[str, Any]:
     tool = get(name)
     if not tool:
         return {"ok": False, "error": "unknown_tool"}
@@ -100,7 +100,10 @@ def execute(name: str, arguments: dict[str, Any], *, owner: bool) -> dict[str, A
     if validation_error:
         return {"ok": False, "error": validation_error}
     try:
-        result = tool.handler(**arguments)
+        kwargs = dict(arguments)
+        if user_id is not None and "user_id" in inspect.signature(tool.handler).parameters:
+            kwargs["user_id"] = user_id
+        result = tool.handler(**kwargs)
         return result if isinstance(result, dict) else {"ok": True, "result": result}
     except Exception:
         return {"ok": False, "error": "tool_execution_failed"}
