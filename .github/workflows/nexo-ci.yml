@@ -14,7 +14,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install runtime smoke-test dependencies
+        run: python -m pip install --disable-pip-version-check "python-telegram-bot>=22,<23" python-dotenv
       - name: Syntax check
         run: python -m compileall -q .
+      - name: Runtime import check
+        run: python -c "import telegram_llama; print('telegram runtime import: PASS')"
       - name: Core unit tests
         run: python -m unittest discover -s tests -v
