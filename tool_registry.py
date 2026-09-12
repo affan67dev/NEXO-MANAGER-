@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -19,6 +18,8 @@ _REGISTRY: dict[str, Tool] = {}
 
 
 def register(tool: Tool) -> None:
+    if not tool.name or not callable(tool.handler):
+        raise ValueError("invalid_tool_registration")
     _REGISTRY[tool.name] = tool
 
 
@@ -44,98 +45,62 @@ def names() -> list[str]:
     return list(_REGISTRY)
 
 
+def _validate_arguments(tool: Tool, arguments: dict[str, Any]) -> str | None:
+    if not isinstance(arguments, dict):
+        return "tool_arguments_must_be_object"
+    schema = tool.parameters or {}
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return "invalid_tool_schema"
+    missing = [name for name in required if name not in arguments]
+    if missing:
+        return "missing_required_argument"
+    if schema.get("additionalProperties") is False:
+        unexpected = set(arguments) - set(properties)
+        if unexpected:
+            return "unexpected_tool_argument"
+
+    for name, value in arguments.items():
+        spec = properties.get(name)
+        if not isinstance(spec, dict):
+            return "invalid_tool_schema"
+        expected = spec.get("type")
+        if expected == "string" and not isinstance(value, str):
+            return "invalid_argument_type"
+        if expected == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+            return "invalid_argument_type"
+        if expected == "object" and not isinstance(value, dict):
+            return "invalid_argument_type"
+        if expected == "array" and not isinstance(value, list):
+            return "invalid_argument_type"
+        if isinstance(value, str):
+            if "minLength" in spec and len(value) < int(spec["minLength"]):
+                return "argument_too_short"
+            if "maxLength" in spec and len(value) > int(spec["maxLength"]):
+                return "argument_too_long"
+        if isinstance(value, int) and not isinstance(value, bool):
+            if "minimum" in spec and value < int(spec["minimum"]):
+                return "argument_below_minimum"
+            if "maximum" in spec and value > int(spec["maximum"]):
+                return "argument_above_maximum"
+        enum = spec.get("enum")
+        if isinstance(enum, list) and value not in enum:
+            return "argument_not_allowed"
+    return None
+
+
 def execute(name: str, arguments: dict[str, Any], *, owner: bool) -> dict[str, Any]:
     tool = get(name)
     if not tool:
         return {"ok": False, "error": "unknown_tool"}
     if tool.owner_only and not owner:
         return {"ok": False, "error": "owner_required"}
+    validation_error = _validate_arguments(tool, arguments)
+    if validation_error:
+        return {"ok": False, "error": validation_error}
     try:
         result = tool.handler(**arguments)
         return result if isinstance(result, dict) else {"ok": True, "result": result}
-    except Exception as exc:
-        return {"ok": False, "error": type(exc).__name__, "message": str(exc)[:300]}
-
-
-def tool_message(name: str, result: dict[str, Any]) -> dict[str, str]:
-    return {
-        "role": "tool",
-        "tool_call_id": name,
-        "name": name,
-        "content": json.dumps(result, ensure_ascii=False),
-    }
-
-
-def _web_search(query: str, max_results: int = 5) -> dict[str, Any]:
-    from tools.web_search import search_web
-
-    return {"ok": True, "results": search_web(query, max_results=max_results)}
-
-
-def _memory_search(query: str, limit: int = 5) -> dict[str, Any]:
-    from core.memory_engine import search_memory
-
-    return {"ok": True, "results": search_memory(query, limit=limit)}
-
-
-def _device_action(action: str, **_: Any) -> dict[str, Any]:
-    # Device execution remains behind the runtime's owner/permission layer.
-    # The registry exposes the schema without granting arbitrary shell access.
-    return {"ok": False, "error": "device_action_requires_runtime_executor", "action": action}
-
-
-register(
-    Tool(
-        name="web_search",
-        description="Search the web for current information when local context is insufficient.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-        handler=_web_search,
-        owner_only=True,
-        risk="medium",
-    )
-)
-
-register(
-    Tool(
-        name="memory_search",
-        description="Search NEXO's persistent local memory for relevant stored context.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-        handler=_memory_search,
-        owner_only=True,
-        risk="low",
-    )
-)
-
-register(
-    Tool(
-        name="device_action",
-        description="Request an approved Android device action through the guarded runtime executor.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "action": {"type": "string"},
-            },
-            "required": ["action"],
-            "additionalProperties": False,
-        },
-        handler=_device_action,
-        owner_only=True,
-        risk="high",
-    )
-)
+    except Exception:
+        return {"ok": False, "error": "tool_execution_failed"}
