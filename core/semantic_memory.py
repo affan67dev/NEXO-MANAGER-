@@ -34,7 +34,10 @@ def _conn() -> sqlite3.Connection:
 
 def _schema(c: sqlite3.Connection) -> None:
     c.execute("CREATE TABLE IF NOT EXISTS semantic_memory(id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general', importance INTEGER NOT NULL DEFAULT 5, source TEXT NOT NULL DEFAULT 'conversation', hash TEXT UNIQUE, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_semantic_memory_importance ON semantic_memory(importance,id)")
+    columns = {row[1] for row in c.execute("PRAGMA table_info(semantic_memory)").fetchall()}
+    if "user_id" not in columns:
+        c.execute("ALTER TABLE semantic_memory ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_semantic_memory_user ON semantic_memory(user_id,importance,id)")
     c.commit()
 
 
@@ -55,32 +58,34 @@ class SemanticMemory:
             except Exception:
                 self.client = self.collection = None
 
-    def add(self, content: str, category: str = "general", importance: int = 5, source: str = "conversation") -> bool:
+    def add(self, content: str, category: str = "general", importance: int = 5, source: str = "conversation", user_id: int | str | None = None) -> bool:
         content = (content or "").strip()
         if not content or len(content) > MAX_CONTENT_CHARS or looks_sensitive(content):
             return False
         importance = max(1, min(int(importance), 10))
-        digest = hashlib.sha256(content.encode()).hexdigest()
+        uid = str(user_id or "")
+        digest = hashlib.sha256(f"{uid}\0{content}".encode()).hexdigest()
         try:
             with _conn() as c:
                 _schema(c)
-                c.execute("INSERT OR IGNORE INTO semantic_memory(content,category,importance,source,hash) VALUES(?,?,?,?,?)", (content, str(category), importance, str(source), digest))
+                c.execute("INSERT OR IGNORE INTO semantic_memory(content,category,importance,source,hash,user_id) VALUES(?,?,?,?,?,?)", (content, str(category), importance, str(source), digest, uid))
             if self.collection:
-                self.collection.upsert(ids=[digest], documents=[content], metadatas=[{"category": str(category), "importance": importance, "source": str(source)}])
+                self.collection.upsert(ids=[digest], documents=[content], metadatas=[{"category": str(category), "importance": importance, "source": str(source), "user_id": uid}])
             return True
         except Exception:
             return False
 
-    def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 5, user_id: int | str | None = None) -> list[dict[str, Any]]:
         query = (query or "").strip()
         if not query:
             return []
         safe_limit = max(1, min(int(limit), 10))
+        uid = str(user_id or "")
         if self.collection:
             try:
                 count = self.collection.count()
                 if count > 0:
-                    r = self.collection.query(query_texts=[query], n_results=min(safe_limit, count))
+                    r = self.collection.query(query_texts=[query], n_results=min(safe_limit, count), where={"user_id": uid})
                     docs = (r.get("documents") or [[]])[0]
                     metas = (r.get("metadatas") or [[]])[0]
                     return [{"content": d, "metadata": m or {}} for d, m in zip(docs, metas) if isinstance(d, str)]
@@ -88,7 +93,7 @@ class SemanticMemory:
                 pass
         with _conn() as c:
             _schema(c)
-            rows = c.execute("SELECT content,category,importance,source FROM semantic_memory WHERE content LIKE ? ORDER BY importance DESC, id DESC LIMIT ?", (f"%{query}%", safe_limit)).fetchall()
+            rows = c.execute("SELECT content,category,importance,source FROM semantic_memory WHERE user_id=? AND content LIKE ? ORDER BY importance DESC, id DESC LIMIT ?", (uid, f"%{query}%", safe_limit)).fetchall()
         return [{"content": r[0], "metadata": {"category": r[1], "importance": r[2], "source": r[3]}} for r in rows]
 
 
