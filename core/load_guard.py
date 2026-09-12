@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
 
-# Conservative defaults for a low-RAM Android/Termux deployment.
-PER_USER_INTERVAL = 1.0       # 1 accepted request/user/second
-MAX_ACTIVE = 1                # one local Llama inference at a time
-MAX_QUEUE = 4                 # bounded waiting work; never grow without limit
-MAX_WAIT_SECONDS = 20.0       # queued requests fail fast instead of waiting forever
+PER_USER_INTERVAL = 1.0
+MAX_ACTIVE = 1
+MAX_QUEUE = 4
+MAX_WAIT_SECONDS = 20.0
+MAX_TRACKED_USERS = 1024
 
 
 class LoadGuard:
@@ -40,6 +39,11 @@ class LoadGuard:
                 return False, "overloaded"
 
             self._last_request[user_id] = now
+            if len(self._last_request) > MAX_TRACKED_USERS:
+                cutoff = now - self.per_user_interval
+                stale = [uid for uid, stamp in self._last_request.items() if stamp < cutoff]
+                for uid in stale[: len(stale) - MAX_TRACKED_USERS // 2 if len(stale) > MAX_TRACKED_USERS // 2 else len(stale)]:
+                    self._last_request.pop(uid, None)
             self._queued += 1
 
         try:
@@ -48,6 +52,10 @@ class LoadGuard:
             async with self._lock:
                 self._queued = max(0, self._queued - 1)
             return False, "queue_timeout"
+        except asyncio.CancelledError:
+            async with self._lock:
+                self._queued = max(0, self._queued - 1)
+            raise
 
         async with self._lock:
             self._queued = max(0, self._queued - 1)
