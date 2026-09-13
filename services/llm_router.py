@@ -14,7 +14,7 @@ def _positive_int(name: str, default: int) -> int:
 
 
 class LLMRouter:
-    """Choose one already-running LLM endpoint; never starts or loads a model."""
+    """Choose one LLM endpoint; never starts or loads a model."""
 
     def __init__(self, primary_url: str):
         self.primary_url = primary_url
@@ -26,10 +26,8 @@ class LLMRouter:
         return self.enabled and bool(self.secondary_url) and self.secondary_url != self.primary_url
 
     def choose_model(self, goal: str, messages: list[dict[str, Any]], intent: str | None = None) -> str:
-        """Route before any model call using request signals, not system-prompt text."""
+        """Choose before execution. Length is a signal, never the only signal."""
         text = str(goal or "").strip().lower()
-        # Only user messages can contribute additional request complexity. System
-        # prompts/tool descriptions are deliberately excluded so they cannot force Qwen.
         for message in messages:
             if isinstance(message, dict) and str(message.get("role", "")).lower() == "user":
                 content = str(message.get("content", "")).strip().lower()
@@ -45,34 +43,31 @@ class LLMRouter:
         reasoning_signal = any(term in text for term in reasoning_terms)
         word_count = len(text.split())
         char_count = len(text)
-
-        # Semantic intent is supplied by the existing NEXO Manager. The router does
-        # not re-classify the request or create another manager.
         normalized_intent = (intent or "").strip().lower()
         complex_intent = normalized_intent in {"coding", "database", "monitoring"} and reasoning_signal
         long_signal = char_count >= self.complexity_chars or word_count >= 120
 
-        if self._secondary_available() and (reasoning_signal or complex_intent or long_signal):
+        # If a request is semantically complex/long, it is a Qwen request even when
+        # Qwen is unavailable. call() then fails closed instead of silently using LLaMA.
+        if reasoning_signal or complex_intent or long_signal:
             return "qwen"
         return "llama"
 
     def should_use_secondary(self, goal: str, messages: list[dict[str, Any]], intent: str | None = None) -> bool:
         return self.choose_model(goal, messages, intent=intent) == "qwen"
 
-    def call(
-        self,
-        goal: str,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        ask_fn: Callable[..., dict[str, Any]],
-        *,
-        intent: str | None = None,
-    ) -> dict[str, Any]:
-        """Call the selected model only; Qwen is failure fallback only after LLaMA."""
+    def call(self, goal: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, ask_fn: Callable[..., dict[str, Any]], *, intent: str | None = None) -> dict[str, Any]:
+        """Call one selected model; Qwen is fallback only after a LLaMA failure."""
         selected = self.choose_model(goal, messages, intent=intent)
-        primary = self.primary_url if selected == "llama" else self.secondary_url
-        if not primary:
-            raise RuntimeError("qwen_not_configured" if selected == "qwen" else "llama_not_configured")
+        if selected == "qwen":
+            if not self._secondary_available():
+                raise RuntimeError("qwen_not_configured")
+            primary = self.secondary_url
+        else:
+            primary = self.primary_url
+            if not primary:
+                raise RuntimeError("llama_not_configured")
+
         try:
             return ask_fn(primary, messages, tools)
         except Exception as exc:
