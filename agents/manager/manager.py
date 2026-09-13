@@ -41,17 +41,45 @@ class NexoManager:
         return any(k in t for k in keywords)
 
     def classify(self, text: str) -> str:
-        """Coarse routing only; semantic decomposition is deliberately left to LLaMA."""
-        t = (text or "").lower()
+        """Semantic-first coarse intent used before model selection.
+
+        This is deliberately deterministic: it does not invoke either model merely
+        to decide which model should receive the request.
+        """
+        t = (text or "").strip().lower()
+        if not t:
+            return "conversation"
         if any(x in t for x in ("security", "hack", "vulnerability", "breach", "token", "credential")): return "security"
         if any(x in t for x in ("delete", "wipe", "factory reset", "shutdown", "format", "payment", "send message")): return "security"
         if any(x in t for x in ("youtube", "instagram", "telegram", "whatsapp", "chrome", "google", "open", "launch", "play", "song", "music", "wifi", "torch", "battery", "split", "window", "pip", "device", "phone", "tablet")): return "device_control"
-        if any(x in t for x in ("bug", "error", "exception", "code", "backend", "api", "fix")): return "coding"
+        if any(x in t for x in ("bug", "error", "exception", "code", "backend", "api", "fix", "debug", "root cause")): return "coding"
         if any(x in t for x in ("database", "db", "query", "migration", "backup")): return "database"
         if any(x in t for x in ("user", "support", "complaint", "email", "report")): return "support"
         if any(x in t for x in ("monitor", "health", "server", "uptime", "crash", "log")): return "monitoring"
         if any(x in t for x in ("test", "verify", "verification", "review", "check")): return "verification"
         return "conversation"
+
+    def complexity_signals(self, text: str) -> dict[str, Any]:
+        """Return routing signals without executing a model.
+
+        Length is only one signal. Semantic indicators and task type are considered
+        first so long greetings/history do not automatically select Qwen.
+        """
+        t = (text or "").strip().lower()
+        reasoning_terms = (
+            "analyze", "analyse", "reason", "reasoning", "compare", "tradeoff",
+            "root cause", "deep dive", "in depth", "step by step", "architecture",
+            "design", "debug", "diagnose", "evaluate", "critically", "why does",
+            "why is", "multiple possibilities", "pros and cons", "complex", "detailed",
+        )
+        matched = [term for term in reasoning_terms if term in t]
+        word_count = len(t.split())
+        return {
+            "matched_reasoning_signals": matched,
+            "word_count": word_count,
+            "char_count": len(t),
+            "reasoning_heavy": bool(matched) or word_count >= 120,
+        }
 
     def create_task(self, request: str) -> Task:
         objective = (request or "").strip()
