@@ -26,24 +26,16 @@ class LLMRouter:
         return self.enabled and bool(self.secondary_url) and self.secondary_url != self.primary_url
 
     def choose_model(self, goal: str, messages: list[dict[str, Any]], intent: str | None = None) -> str:
-        """Route before any model call.
+        """Route before any model call using request signals, not system-prompt text."""
+        text = str(goal or "").strip().lower()
+        # Only user messages can contribute additional request complexity. System
+        # prompts/tool descriptions are deliberately excluded so they cannot force Qwen.
+        for message in messages:
+            if isinstance(message, dict) and str(message.get("role", "")).lower() == "user":
+                content = str(message.get("content", "")).strip().lower()
+                if content and content != text:
+                    text += "\n" + content
 
-        Intent/semantic signals have priority over length. Length is only a secondary
-        signal for genuinely long requests. A complex request never calls LLaMA first.
-        """
-        normalized_intent = (intent or "").strip().lower()
-        if normalized_intent in {"security", "conversation", "support", "verification", "device_control"}:
-            # These may still be complex, so use explicit reasoning signals below.
-            pass
-        if normalized_intent in {"coding", "database", "monitoring"}:
-            # Operational tasks are allowed to use Qwen when their wording indicates
-            # substantial reasoning; otherwise LLaMA remains the fast first model.
-            pass
-
-        text = " ".join([
-            str(goal or ""),
-            " ".join(str(m.get("content", "")) for m in messages if isinstance(m, dict)),
-        ]).lower()
         reasoning_terms = (
             "analyze", "analyse", "reason", "reasoning", "compare", "tradeoff",
             "root cause", "deep dive", "in depth", "step by step", "architecture",
@@ -51,11 +43,16 @@ class LLMRouter:
             "why is", "multiple possibilities", "pros and cons", "complex", "detailed",
         )
         reasoning_signal = any(term in text for term in reasoning_terms)
-        word_count = len(str(goal or "").split())
-        char_count = len(str(goal or ""))
+        word_count = len(text.split())
+        char_count = len(text)
+
+        # Semantic intent is supplied by the existing NEXO Manager. The router does
+        # not re-classify the request or create another manager.
+        normalized_intent = (intent or "").strip().lower()
+        complex_intent = normalized_intent in {"coding", "database", "monitoring"} and reasoning_signal
         long_signal = char_count >= self.complexity_chars or word_count >= 120
 
-        if self._secondary_available() and (reasoning_signal or long_signal):
+        if self._secondary_available() and (reasoning_signal or complex_intent or long_signal):
             return "qwen"
         return "llama"
 
@@ -71,17 +68,11 @@ class LLMRouter:
         *,
         intent: str | None = None,
     ) -> dict[str, Any]:
-        """Call the selected model only.
-
-        If LLaMA fails, Qwen is a safe secondary fallback when explicitly enabled.
-        If Qwen was selected and fails, do not silently downgrade to LLaMA: surface the
-        failure so the caller cannot return a misleading answer from the wrong model.
-        """
+        """Call the selected model only; Qwen is failure fallback only after LLaMA."""
         selected = self.choose_model(goal, messages, intent=intent)
         primary = self.primary_url if selected == "llama" else self.secondary_url
         if not primary:
             raise RuntimeError("qwen_not_configured" if selected == "qwen" else "llama_not_configured")
-
         try:
             return ask_fn(primary, messages, tools)
         except Exception as exc:
