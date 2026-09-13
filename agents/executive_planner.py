@@ -56,13 +56,8 @@ class ExecutivePlanner:
         self.llama_url = llama_url
         self.router = LLMRouter(llama_url)
 
-    def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20) -> list[dict[str, Any]]:
-        """Turn one user request into bounded, data-only executable work.
-
-        LLaMA performs request understanding and decomposition. No returned text is
-        executed directly; the orchestrator validates dependencies and the tool
-        registry remains the only execution boundary.
-        """
+    def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20, intent: str | None = None) -> list[dict[str, Any]]:
+        """Turn one user request into bounded, data-only executable work."""
         schema = {"tasks": [{
             "task_id": "task-1", "objective": "...", "intent": "...", "priority": "normal",
             "dependencies": [], "required_tools": [], "expected_result": "...",
@@ -80,7 +75,7 @@ class ExecutivePlanner:
         )}, {"role": "user", "content": goal}]
         if context:
             messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
-        result = self.router.call(goal, messages, None, ask)
+        result = self.router.call(goal, messages, None, ask, intent=intent)
         parsed = _extract_json(str(_message(result).get("content") or ""))
         if isinstance(parsed, dict):
             parsed = parsed.get("tasks")
@@ -88,20 +83,23 @@ class ExecutivePlanner:
             return []
         return [x for x in parsed[:max(1, min(int(max_tasks), 20))] if isinstance(x, dict) and str(x.get("objective") or "").strip()]
 
-    def run(self, goal: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]], executor, owner: bool, user_id: int | str | None = None, max_steps: int = 6) -> str:
+    def run(self, goal: str, messages: list[dict[str, Any]], tools, executor, owner: bool, user_id: int | str | None = None, max_steps: int = 6, intent: str | None = None) -> str:
         working = list(messages)
         tool_calls_used = 0
         for _ in range(max(1, min(int(max_steps), 6))):
-            result = self.router.call(goal, working, tools, ask)
+            result = self.router.call(goal, working, tools, ask, intent=intent)
             msg = _message(result)
             calls = msg.get("tool_calls") or []
             if not calls:
-                return str(msg.get("content") or "I couldn't produce a result.").strip()
+                answer = str(msg.get("content") or "").strip()
+                if not answer:
+                    raise RuntimeError("empty_model_response")
+                return answer
             working.append(msg)
             for call in calls:
                 tool_calls_used += 1
                 if tool_calls_used > MAX_TOOL_CALLS_PER_RUN:
-                    return "The task reached the tool execution safety limit."
+                    raise RuntimeError("tool_execution_safety_limit")
                 fn = call.get("function") or {}
                 name = str(fn.get("name") or "")
                 raw_args = fn.get("arguments") or "{}"
@@ -116,4 +114,4 @@ class ExecutivePlanner:
                     outcome = {"ok": False, "verified": False, "error": f"tool_execution_failed:{type(exc).__name__}"}
                 serialized = json.dumps(outcome, ensure_ascii=False)[:MAX_TOOL_RESULT_CHARS]
                 working.append({"role": "tool", "tool_call_id": str(call.get("id") or name), "name": name, "content": serialized})
-        return "The task reached the execution safety limit before completion."
+        raise RuntimeError("planner_execution_safety_limit")
