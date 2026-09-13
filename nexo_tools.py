@@ -27,23 +27,40 @@ def _app_search(app: str, query: str, user_id: int | str | None = None) -> dict:
     return {"ok": ok, "message": msg, "verified": ok}
 
 
+def _media_play(app: str, query: str, user_id: int | str | None = None) -> dict:
+    """Attempt media playback through the existing app adapter.
+
+    The adapter can verify that the app/search URL was launched. It cannot claim that
+    Android actually started playback unless a platform-specific playback API reports it.
+    """
+    ok, msg = app_router.play_media(app, _bounded_text(query, MAX_QUERY_CHARS))
+    return {"ok": ok, "message": msg, "verified": ok, "playback_verified": False}
+
+
+def _window_control(primary_app: str, secondary_app: str | None = None, mode: str = "split") -> dict:
+    ok, msg = app_router.window_control(primary_app, secondary_app, mode)
+    return {"ok": ok, "message": msg, "verified": ok}
+
+
 def _memory_search(query: str, limit: int = 5, user_id: int | str | None = None) -> dict:
-    return {"ok": True, "results": memory.search(_bounded_text(query, MAX_QUERY_CHARS), limit, user_id=user_id)}
+    return {"ok": True, "results": memory.search(_bounded_text(query, MAX_QUERY_CHARS), limit, user_id=user_id), "verified": True}
 
 
 def _memory_add(content: str, category: str = "general", importance: int = 5, user_id: int | str | None = None) -> dict:
     content = _bounded_text(content, MAX_MEMORY_CHARS)
     if not content:
-        return {"ok": False, "error": "empty_memory"}
+        return {"ok": False, "error": "empty_memory", "verified": False}
     if not save_memory(category, content, importance, "assistant", user_id=user_id):
-        return {"ok": False, "error": "memory_rejected"}
+        return {"ok": False, "error": "memory_rejected", "verified": False}
     if not memory.add(content, category, importance, "assistant", user_id=user_id):
-        return {"ok": False, "error": "semantic_memory_rejected"}
+        return {"ok": False, "error": "semantic_memory_rejected", "verified": False}
     return {"ok": True, "verified": True}
 
 
 def _web_search(query: str, max_results: int = 5, user_id: int | str | None = None) -> dict:
-    return tavily_search(_bounded_text(query, MAX_QUERY_CHARS), max_results)
+    result = tavily_search(_bounded_text(query, MAX_QUERY_CHARS), max_results)
+    result.setdefault("verified", bool(result.get("ok")))
+    return result
 
 
 def _health(user_id: int | str | None = None) -> dict:
@@ -55,18 +72,21 @@ def _git_status(repo: str = ".", user_id: int | str | None = None) -> dict:
 
 
 def _device(action: str, user_id: int | str | None = None) -> dict:
-    return device_run(action)
+    result = device_run(action)
+    result.setdefault("verified", bool(result.get("ok")))
+    return result
 
 
 def register_all() -> None:
-    register(Tool("app_open", "Open an allowed Android app/site.", {"type":"object","properties":{"app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google"]}},"required":["app"],"additionalProperties":False}, _app_open))
+    register(Tool("app_open", "Open an allowed app/site on the supported device.", {"type":"object","properties":{"app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google"]}},"required":["app"],"additionalProperties":False}, _app_open))
     register(Tool("app_search", "Search an allowed app/site.", {"type":"object","properties":{"app":{"type":"string","enum":["youtube","google","chrome"]},"query":{"type":"string","minLength":1,"maxLength":2000}},"required":["app","query"],"additionalProperties":False}, _app_search))
+    register(Tool("media_play", "Attempt to open a media search/play request in an allowed media app.", {"type":"object","properties":{"app":{"type":"string","enum":["youtube"]},"query":{"type":"string","minLength":1,"maxLength":2000}},"required":["app","query"],"additionalProperties":False}, _media_play, risk="low"))
+    register(Tool("window_control", "Arrange supported Android apps using a configured window/split-screen adapter.", {"type":"object","properties":{"primary_app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google","whatsapp"]},"secondary_app":{"type":["string","null"],"enum":["youtube","instagram","telegram","chrome","google","whatsapp",None]},"mode":{"type":"string","enum":["split","pip","side_by_side"]}},"required":["primary_app","mode"],"additionalProperties":False}, _window_control))
     register(Tool("memory_search", "Search the requesting user's long-term semantic memory.", {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":2000},"limit":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":False}, _memory_search))
     register(Tool("memory_add", "Store useful non-sensitive information in the requesting user's long-term memory.", {"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":12000},"category":{"type":"string","maxLength":100},"importance":{"type":"integer","minimum":1,"maximum":10}},"required":["content"],"additionalProperties":False}, _memory_add))
     register(Tool("web_search", "Search the web through Tavily when local context is insufficient.", {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":2000},"max_results":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":False}, _web_search, owner_only=False, risk="medium"))
     register(Tool("system_health", "Inspect recent NEXO runtime errors.", {"type":"object","properties":{},"additionalProperties":False}, _health))
     register(Tool("git_status", "Inspect git status of the NEXO repository or its subdirectories.", {"type":"object","properties":{"repo":{"type":"string","maxLength":500}},"additionalProperties":False}, _git_status))
     register(Tool("device_action", "Perform one approved Android device action.", {"type":"object","properties":{"action":{"type":"string","enum":["wifi_on","wifi_off","torch_on","torch_off","battery"]}},"required":["action"],"additionalProperties":False}, _device, risk="high"))
-
 
 register_all()
