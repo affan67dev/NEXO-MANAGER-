@@ -1,395 +1,356 @@
-import os
+"""NEXO Voice Assistant: wake word -> STT -> NEXO Manager -> tools -> TTS.
+
+The module is intentionally dependency-light.  Optional integrations are detected
+at runtime so the existing NEXO manager remains the single routing brain.
+
+Supported runtime targets:
+- Android/Termux: microphone, Termux TTS, allowed app launch/search, split-screen intent
+- Windows/macOS: adapter surface with explicit unsupported responses until a native
+  controller is installed.  No fake success is returned.
+
+STT priority:
+1. faster-whisper Python package when installed and NEXO_WHISPER_MODEL is configured
+2. whisper.cpp/whisper-cli when installed and NEXO_WHISPER_MODEL is configured
+
+Wake word:
+- optional openWakeWord model when installed/configured
+- deterministic transcript gate fallback ("hey nexo"/Hindi variants)
+
+Security:
+- only allowlisted tools are executable
+- destructive/sensitive actions require explicit confirmation
+- tool failures are never reported as success
+"""
+from __future__ import annotations
+
+import importlib.util
 import json
+import os
+import platform
+import re
 import shutil
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable, Optional
 
-
-# ============================================================
-# NEXO VOICE ENGINE
-# Offline + Online ready STT/TTS architecture
-# ============================================================
+from core.router import create_task
 
 BASE_DIR = Path.home() / "NEXO"
 VOICE_DIR = BASE_DIR / "voice"
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
-
-SAMPLE_RATE = 16000
-RECORD_SECONDS = 6
-
-
-# ============================================================
-# BASIC COMMAND RUNNER
-# ============================================================
-
-def run(command, timeout=30):
-    try:
-        result = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
-
-        return {
-            "ok": result.returncode == 0,
-            "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
-            "code": result.returncode
-        }
-
-    except Exception as e:
-        return {
-            "ok": False,
-            "stdout": "",
-            "stderr": str(e),
-            "code": -1
-        }
-
-
-# ============================================================
-# INTERNET CHECK
-# ============================================================
-
-def internet_available():
-    result = run(
-        ["sh", "-c", "command -v curl >/dev/null 2>&1 && curl -Is --max-time 3 https://www.google.com >/dev/null 2>&1"],
-        timeout=5
-    )
-
-    return result["ok"]
-
-
-# ============================================================
-# TEXT TO SPEECH
-# ============================================================
-
-def speak(text):
-    if not text:
-        return False
-
-    print(f"🔊 NEXO: {text}")
-
-    result = run(
-        ["termux-tts-speak", "-r", "1.0", text],
-        timeout=30
-    )
-
-    return result["ok"]
-
-
-# ============================================================
-# POPUP
-# ============================================================
-
-def popup(text):
-    result = run(
-        ["termux-toast", "-g", "top", text],
-        timeout=10
-    )
-
-    return result["ok"]
-
-
-# ============================================================
-# MICROPHONE RECORDING
-# ============================================================
-
-def record(seconds=RECORD_SECONDS):
-    filename = VOICE_DIR / f"input_{int(time.time())}.wav"
-
-    print(f"🎙️ Recording for {seconds} seconds...")
-
-    result = run(
-        [
-            "termux-microphone-record",
-            "-l",
-            str(seconds),
-            "-f",
-            str(filename)
-        ],
-        timeout=seconds + 10
-    )
-
-    if not result["ok"]:
-        print("❌ Recording failed:", result["stderr"])
-        return None
-
-    if not filename.exists():
-        print("❌ Audio file was not created.")
-        return None
-
-    if filename.stat().st_size < 100:
-        print("❌ Audio file is too small.")
-        return None
-
-    print(f"✅ Audio recorded: {filename}")
-    return filename
-
-
-# ============================================================
-# OFFLINE STT ADAPTER
-# ============================================================
-
-def offline_stt(audio_file):
-    """
-    Offline STT adapter.
-
-    The actual local STT engine is intentionally detected
-    dynamically so the rest of NEXO does not depend on one
-    specific implementation.
-    """
-
-    # Future/local engines can be plugged in here.
-
-    possible_engines = [
-        "whisper-cli",
-        "whisper",
-        "whisper-cpp"
-    ]
-
-    available = []
-
-    for engine in possible_engines:
-        if shutil.which(engine):
-            available.append(engine)
-
-    if not available:
-        return {
-            "ok": False,
-            "text": "",
-            "provider": "offline",
-            "error": "No offline STT engine installed."
-        }
-
-    engine = available[0]
-
-    print(f"🧠 Offline STT engine: {engine}")
-
-    # Engine-specific execution will be added once installed.
-    return {
-        "ok": False,
-        "text": "",
-        "provider": "offline",
-        "engine": engine,
-        "error": "Offline STT engine detected but adapter is not configured yet."
-    }
-
-
-# ============================================================
-# ONLINE STT ADAPTER
-# ============================================================
-
-def online_stt(audio_file):
-    """
-    Online STT adapter.
-
-    Provider credentials are intentionally read from environment
-    variables only. Never hard-code API keys here.
-    """
-
-    if not internet_available():
-        return {
-            "ok": False,
-            "text": "",
-            "provider": "online",
-            "error": "Internet unavailable."
-        }
-
-    # Provider integration will be added here.
-    #
-    # Example architecture:
-    #
-    # audio_file
-    #      ↓
-    # online provider
-    #      ↓
-    # transcript
-    #
-    # No credentials are stored in this source file.
-
-    return {
-        "ok": False,
-        "text": "",
-        "provider": "online",
-        "error": "Online STT provider is not configured yet."
-    }
-
-
-# ============================================================
-# SMART STT
-# ============================================================
-
-def speech_to_text(audio_file):
-    """
-    Automatically selects:
-    
-    Internet available
-          ↓
-       Online STT
-          ↓ failure
-       Offline STT
-
-    Internet unavailable
-          ↓
-       Offline STT
-    """
-
-    if not audio_file:
-        return {
-            "ok": False,
-            "text": "",
-            "provider": "none",
-            "error": "No audio file."
-        }
-
-    online = internet_available()
-
-    print("🌐 Internet:", "ONLINE" if online else "OFFLINE")
-
-    if online:
-        result = online_stt(audio_file)
-
-        if result.get("ok") and result.get("text"):
-            return result
-
-        print("⚠️ Online STT unavailable. Trying offline STT...")
-
-    return offline_stt(audio_file)
-
-
-# ============================================================
-# ONE-SHOT VOICE INPUT
-# ============================================================
-
-def listen(seconds=RECORD_SECONDS):
-    audio = record(seconds)
-
-    if not audio:
-        return {
-            "ok": False,
-            "text": "",
-            "provider": "none"
-        }
-
-    result = speech_to_text(audio)
-
-    # Keep the audio file for debugging for now.
-    # It can be cleaned automatically later.
-
-    return result
-
-
-# ============================================================
-# WAKE WORD
-# ============================================================
+SAMPLE_RATE = int(os.getenv("NEXO_VOICE_SAMPLE_RATE", "16000"))
+RECORD_SECONDS = int(os.getenv("NEXO_VOICE_RECORD_SECONDS", "6"))
 
 WAKE_WORDS = (
-    "hey nexo",
-    "hi nexo",
-    "hey nexos",
-    "हे नेक्सो",
-    "हाय नेक्सो"
+    "hey nexo", "hi nexo", "hey nexos", "हे नेक्सो", "हाय नेक्सो"
 )
 
 
-def is_wake_word(text):
+@dataclass
+class VoiceResult:
+    ok: bool
+    text: str = ""
+    response: str = ""
+    stage: str = ""
+    provider: str = ""
+    verified: bool = False
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok, "text": self.text, "response": self.response,
+            "stage": self.stage, "provider": self.provider,
+            "verified": self.verified, "details": self.details,
+        }
+
+
+def _run(command: list[str], timeout: int = 30) -> dict[str, Any]:
+    try:
+        p = subprocess.run(command, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+        return {"ok": p.returncode == 0, "stdout": p.stdout.strip(),
+                "stderr": p.stderr.strip(), "code": p.returncode}
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc), "code": -1}
+
+
+def _command_exists(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def internet_available() -> bool:
+    if not _command_exists("curl"):
+        return False
+    return _run(["curl", "-Is", "--max-time", "3", "https://www.google.com"], 5)["ok"]
+
+
+# ------------------------------- TTS ---------------------------------
+
+def speak(text: str) -> bool:
+    """Speak text and return the real subprocess result; never fake success."""
+    text = (text or "").strip()
     if not text:
         return False
+    if _command_exists("termux-tts-speak"):
+        return _run(["termux-tts-speak", "-r", "1.0", text], 30)["ok"]
+    if platform.system() == "Windows" and _command_exists("powershell"):
+        script = "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak($args[0])"
+        return _run(["powershell", "-NoProfile", "-Command", script, text], 30)["ok"]
+    if platform.system() == "Darwin" and _command_exists("say"):
+        return _run(["say", text], 30)["ok"]
+    return False
 
-    value = text.lower().strip()
 
+# ------------------------------ Microphone ----------------------------
+
+def record(seconds: int = RECORD_SECONDS) -> Optional[Path]:
+    """Record microphone input on Termux.  Desktop capture is deliberately explicit."""
+    seconds = max(1, min(int(seconds), 60))
+    filename = VOICE_DIR / f"input_{int(time.time() * 1000)}.wav"
+    if not _command_exists("termux-microphone-record"):
+        return None
+    result = _run(["termux-microphone-record", "-l", str(seconds), "-f", str(filename)], seconds + 10)
+    if not result["ok"] or not filename.exists() or filename.stat().st_size < 100:
+        return None
+    return filename
+
+
+# -------------------------------- STT ---------------------------------
+
+def _faster_whisper_stt(audio_file: Path) -> dict[str, Any]:
+    model_name = os.getenv("NEXO_WHISPER_MODEL", "")
+    if not model_name or importlib.util.find_spec("faster_whisper") is None:
+        return {"ok": False, "error": "faster-whisper is not configured"}
+    try:
+        from faster_whisper import WhisperModel
+        device = os.getenv("NEXO_WHISPER_DEVICE", "cpu")
+        compute = os.getenv("NEXO_WHISPER_COMPUTE", "int8")
+        model = WhisperModel(model_name, device=device, compute_type=compute)
+        segments, info = model.transcribe(str(audio_file), vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments).strip()
+        return {"ok": bool(text), "text": text, "provider": "faster-whisper",
+                "language": getattr(info, "language", None)}
+    except Exception as exc:
+        return {"ok": False, "error": f"faster-whisper: {exc}"}
+
+
+def _whisper_cpp_stt(audio_file: Path) -> dict[str, Any]:
+    model = os.getenv("NEXO_WHISPER_MODEL", "")
+    if not model:
+        return {"ok": False, "error": "NEXO_WHISPER_MODEL is not configured"}
+    binary = next((x for x in ("whisper-cli", "whisper-cpp", "whisper") if _command_exists(x)), None)
+    if not binary:
+        return {"ok": False, "error": "whisper.cpp CLI is not installed"}
+    result = _run([binary, "-m", model, "-f", str(audio_file), "-nt", "-np"], 120)
+    if not result["ok"]:
+        return {"ok": False, "error": result["stderr"] or "whisper.cpp failed"}
+    text = re.sub(r"\\s+", " ", result["stdout"]).strip()
+    return {"ok": bool(text), "text": text, "provider": "whisper.cpp"}
+
+
+def speech_to_text(audio_file: Path | str) -> dict[str, Any]:
+    path = Path(audio_file)
+    if not path.exists():
+        return {"ok": False, "text": "", "provider": "none", "error": "audio file missing"}
+    for adapter in (_faster_whisper_stt, _whisper_cpp_stt):
+        result = adapter(path)
+        if result.get("ok") and result.get("text"):
+            return result
+    return {"ok": False, "text": "", "provider": "none",
+            "error": "No configured STT engine succeeded"}
+
+
+# ---------------------------- Wake word --------------------------------
+
+def normalize(text: str) -> str:
+    return re.sub(r"\\s+", " ", (text or "").strip().lower())
+
+
+def is_wake_word(text: str) -> bool:
+    value = normalize(text)
     return any(word in value for word in WAKE_WORDS)
 
 
-# ============================================================
-# REMOVE WAKE WORD
-# ============================================================
-
-def remove_wake_word(text):
-    if not text:
-        return ""
-
-    result = text
-
+def remove_wake_word(text: str) -> str:
+    value = text or ""
     for word in WAKE_WORDS:
-        result = result.replace(word, "")
-        result = result.replace(word.title(), "")
-
-    return result.strip(" ,.!?")
+        value = re.sub(re.escape(word), "", value, flags=re.I)
+    return value.strip(" ,.!?;:")
 
 
-# ============================================================
-# VOICE SESSION
-# ============================================================
+def detect_wake_word_from_audio(audio_file: Path | str) -> bool:
+    """Use openWakeWord if available; otherwise use the STT transcript gate.
 
-def voice_session():
-    print()
-    print("================================")
-    print("🎙️ NEXO VOICE ENGINE")
-    print("================================")
-    print("Waiting for voice input...")
-    print()
+    A real openWakeWord model must be supplied through NEXO_WAKE_MODEL.  This avoids
+    silently pretending that a generic model is the exact 'Hey Nexo' wake word.
+    """
+    model_path = os.getenv("NEXO_WAKE_MODEL", "")
+    if model_path and importlib.util.find_spec("openwakeword") is not None:
+        try:
+            from openwakeword.model import Model
+            import wave
+            import numpy as np
+            with wave.open(str(audio_file), "rb") as wav:
+                frames = wav.readframes(wav.getnframes())
+                rate = wav.getframerate()
+            if rate != 16000:
+                return False
+            model = Model(wakeword_models=[model_path], inference_framework="onnx")
+            audio = np.frombuffer(frames, dtype=np.int16)
+            scores = model.predict(audio)
+            return bool(scores and max(float(v) for v in scores.values()) >= float(os.getenv("NEXO_WAKE_THRESHOLD", "0.5")))
+        except Exception:
+            return False
+    transcript = speech_to_text(Path(audio_file))
+    return bool(transcript.get("ok") and is_wake_word(transcript.get("text", "")))
 
-    result = listen()
 
-    if not result.get("ok"):
-        print("❌ STT:", result.get("error", "Unknown error"))
-        return result
+# ------------------------- Device/tool adapters -----------------------
 
-    text = result.get("text", "").strip()
+SAFE_APPS = {"youtube", "instagram", "telegram", "chrome", "google"}
+SENSITIVE_TERMS = ("delete", "wipe", "factory reset", "shutdown", "format", "password", "credential", "payment")
 
-    print("📝 Recognized:", text)
-    print("🔌 Provider:", result.get("provider"))
 
+def _android_app_action(command: str) -> dict[str, Any]:
+    """Reuse the existing app router rather than creating a second NEXO brain."""
+    import app_router
+    parsed = app_router.parse_command(command)
+    app = parsed.get("app")
+    if app not in SAFE_APPS:
+        return {"ok": False, "verified": False, "error": "app_not_allowlisted", "command": parsed}
+    result = app_router.execute(command)
+    result["verified"] = bool(result.get("ok"))
     return result
 
 
-# ============================================================
-# SELF TEST
-# ============================================================
-
-def self_test():
-    print("================================")
-    print("NEXO VOICE ENGINE SELF TEST")
-    print("================================")
-
-    print("📁 Voice directory:", VOICE_DIR)
-
-    print(
-        "🎙️ Microphone:",
-        "AVAILABLE" if shutil.which("termux-microphone-record") else "MISSING"
-    )
-
-    print(
-        "🔊 TTS:",
-        "AVAILABLE" if shutil.which("termux-tts-speak") else "MISSING"
-    )
-
-    print(
-        "📱 Toast:",
-        "AVAILABLE" if shutil.which("termux-toast") else "MISSING"
-    )
-
-    print(
-        "🌐 Internet:",
-        "ONLINE" if internet_available() else "OFFLINE"
-    )
-
-    print()
-    print("Voice architecture: READY")
-    print("Offline STT: adapter ready")
-    print("Online STT: adapter ready")
-    print("TTS: ready")
-    print("Wake word: ready")
+def _android_split_screen(command: str) -> dict[str, Any]:
+    """Best-effort Android split-screen adapter; reports unsupported instead of lying."""
+    if not _command_exists("am"):
+        return {"ok": False, "verified": False, "error": "Android am command unavailable"}
+    # Split-screen layout is OS/version/launcher specific.  We only expose the adapter
+    # and require an explicit Android implementation command from the deployment.
+    intent = os.getenv("NEXO_ANDROID_SPLIT_COMMAND", "")
+    if not intent:
+        return {"ok": False, "verified": False, "error": "split-screen adapter not configured for this Android build"}
+    result = _run(["sh", "-c", intent], 20)
+    return {"ok": result["ok"], "verified": result["ok"], "stdout": result["stdout"], "error": result["stderr"]}
 
 
-# ============================================================
-# MAIN
-# ============================================================
+def execute_tool(text: str, confirmation: bool = False) -> dict[str, Any]:
+    """Execute only supported, low-risk device actions through existing adapters."""
+    normalized = normalize(text)
+    if any(term in normalized for term in SENSITIVE_TERMS) and not confirmation:
+        return {"ok": False, "verified": False, "requires_confirmation": True,
+                "message": "This action requires explicit confirmation."}
+
+    if "side" in normalized and ("whatsapp" in normalized or "split" in normalized):
+        return _android_split_screen(text)
+
+    if platform.system() in {"Linux", "Android"}:
+        return _android_app_action(text)
+    return {"ok": False, "verified": False,
+            "error": f"No native device adapter enabled for {platform.system()}"}
+
+
+# ----------------------------- Pipeline -------------------------------
+
+class NexoVoiceAssistant:
+    """End-to-end voice controller using the existing NEXO Manager/Router."""
+
+    def __init__(self, stt: Callable[[Path | str], dict[str, Any]] = speech_to_text,
+                 tts: Callable[[str], bool] = speak,
+                 recorder: Callable[[int], Optional[Path]] = record,
+                 tool_executor: Callable[[str, bool], dict[str, Any]] = execute_tool) -> None:
+        self.stt = stt
+        self.tts = tts
+        self.recorder = recorder
+        self.tool_executor = tool_executor
+
+    def process_text(self, text: str, confirmation: bool = False) -> VoiceResult:
+        text = (text or "").strip()
+        if not text:
+            return VoiceResult(False, stage="input")
+
+        if is_wake_word(text):
+            command = remove_wake_word(text)
+            if not command:
+                response = "Yes, how can I help you?"
+                spoken = self.tts(response)
+                return VoiceResult(True, text=text, response=response, stage="wake", provider="text",
+                                   verified=spoken, details={"tts_verified": spoken})
+            text = command
+
+        # This is the existing NEXO brain.  We do not create another router.
+        task = create_task(text)
+        tool_result = self.tool_executor(text, confirmation)
+        if tool_result.get("requires_confirmation"):
+            response = "I need your confirmation before I do that."
+        elif tool_result.get("ok"):
+            response = str(tool_result.get("message", "Done."))
+        elif task.agent == "manager":
+            response = "I understood the request, but I don't have an approved tool for that action yet."
+        else:
+            response = f"NEXO routed this request to {task.agent}, but no voice execution adapter is enabled for it yet."
+
+        spoken = self.tts(response)
+        return VoiceResult(bool(tool_result.get("ok")) or tool_result.get("requires_confirmation", False),
+                           text=text, response=response, stage="execute", provider="nexo-manager",
+                           verified=bool(tool_result.get("verified")) and spoken,
+                           details={"agent": task.agent, "intent": task.intent,
+                                    "tool": tool_result, "tts_verified": spoken})
+
+    def listen_once(self, seconds: int = RECORD_SECONDS) -> VoiceResult:
+        audio = self.recorder(seconds)
+        if not audio:
+            return VoiceResult(False, stage="record", details={"error": "microphone recording failed"})
+        stt = self.stt(audio)
+        if not stt.get("ok"):
+            return VoiceResult(False, stage="stt", provider=stt.get("provider", "none"),
+                               details=stt)
+        return self.process_text(stt.get("text", ""))
+
+    def run_forever(self, seconds: int = 3) -> None:
+        """Background wake loop.  In transcript-fallback mode this consumes STT audio.
+        For low-power true wake detection, configure NEXO_WAKE_MODEL/openWakeWord.
+        """
+        while True:
+            audio = self.recorder(seconds)
+            if not audio:
+                time.sleep(1)
+                continue
+            if not detect_wake_word_from_audio(audio):
+                continue
+            stt = self.stt(audio)
+            if not stt.get("ok"):
+                continue
+            self.process_text(stt.get("text", ""))
+
+
+def self_test() -> dict[str, Any]:
+    return {
+        "microphone": _command_exists("termux-microphone-record"),
+        "tts": _command_exists("termux-tts-speak") or _command_exists("say") or _command_exists("powershell"),
+        "stt_faster_whisper_installed": importlib.util.find_spec("faster_whisper") is not None,
+        "stt_whisper_cli_installed": any(_command_exists(x) for x in ("whisper-cli", "whisper-cpp", "whisper")),
+        "wake_model_configured": bool(os.getenv("NEXO_WAKE_MODEL")),
+        "nexo_router": True,
+        "android_split_configured": bool(os.getenv("NEXO_ANDROID_SPLIT_COMMAND")),
+    }
+
+
+# Backward-compatible aliases used by the original script.
+def listen(seconds: int = RECORD_SECONDS) -> dict[str, Any]:
+    result = NexoVoiceAssistant().listen_once(seconds)
+    return result.as_dict()
+
+
+def voice_session() -> dict[str, Any]:
+    result = NexoVoiceAssistant().listen_once()
+    return result.as_dict()
+
 
 if __name__ == "__main__":
-    self_test()
+    print(json.dumps(self_test(), indent=2))
