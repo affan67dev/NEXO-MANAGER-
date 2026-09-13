@@ -21,13 +21,15 @@ def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | 
         payload["tool_choice"] = "auto"
     try:
         req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode(), headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=LLAMA_TIMEOUT_SECONDS) as r:
-            data = json.loads(r.read())
+        with urllib.request.urlopen(req, timeout=LLAMA_TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read())
         if not isinstance(data, dict):
             raise RuntimeError("invalid_llama_response")
         return data
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"llama_http_{exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"llama_unavailable:{type(exc).__name__}") from exc
 
 
 def _message(data: dict[str, Any]) -> dict[str, Any]:
@@ -55,26 +57,36 @@ class ExecutivePlanner:
         self.router = LLMRouter(llama_url)
 
     def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20) -> list[dict[str, Any]]:
-        """Ask the existing LLaMA manager path to turn one request into executable tasks.
+        """Turn one user request into bounded, data-only executable work.
 
-        The result is data, not executable instructions. Tool selection still happens
-        later through the registered-tool execution path.
+        LLaMA performs request understanding and decomposition. No returned text is
+        executed directly; the orchestrator validates dependencies and the tool
+        registry remains the only execution boundary.
         """
-        schema = {"tasks": [{"task_id":"task-1","objective":"...","priority":"normal","dependencies":[],"required_tools":[],"expected_result":"...","kind":"sequential|parallel|dependent|complex","timeout_seconds":90,"max_retries":2,"parameters":{}}]}
-        messages = [{"role":"system","content":(
-            "You are NEXO's request analyst. Understand the user's objective before selecting tools. "
-            "Decompose the request into the smallest meaningful executable tasks. Preserve order and dependencies. "
-            "Independent tasks may be parallel. Never invent unsupported capabilities. Return ONLY valid JSON matching "
-            f"this shape: {json.dumps(schema, ensure_ascii=False)}. Maximum {max_tasks} tasks."
-        )}, {"role":"user","content":goal}]
+        schema = {"tasks": [{
+            "task_id": "task-1", "objective": "...", "intent": "...", "priority": "normal",
+            "dependencies": [], "required_tools": [], "expected_result": "...",
+            "kind": "sequential|parallel|dependent|complex", "resources": [],
+            "timeout_seconds": 90, "max_retries": 2, "parameters": {}
+        }]}
+        messages = [{"role": "system", "content": (
+            "You are NEXO's request analyst and planner. First understand the user's objective; "
+            "do not choose a tool merely because a keyword appears. Decompose the request into the "
+            "smallest meaningful executable tasks, assign a semantic intent to each task, preserve "
+            "dependencies, and mark shared resources (for example app:youtube, device:audio, "
+            "device:window) so conflicting work is never run concurrently. Independent tasks may be "
+            "parallel. Never invent unsupported capabilities. Return ONLY valid JSON matching this shape: "
+            f"{json.dumps(schema, ensure_ascii=False)}. Maximum {max_tasks} tasks."
+        )}, {"role": "user", "content": goal}]
         if context:
-            messages.append({"role":"system","content":"Relevant state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
+            messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
         result = self.router.call(goal, messages, None, ask)
         parsed = _extract_json(str(_message(result).get("content") or ""))
-        if isinstance(parsed, dict): parsed = parsed.get("tasks")
+        if isinstance(parsed, dict):
+            parsed = parsed.get("tasks")
         if not isinstance(parsed, list):
             return []
-        return [x for x in parsed[:max_tasks] if isinstance(x, dict) and str(x.get("objective") or "").strip()]
+        return [x for x in parsed[:max(1, min(int(max_tasks), 20))] if isinstance(x, dict) and str(x.get("objective") or "").strip()]
 
     def run(self, goal: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]], executor, owner: bool, user_id: int | str | None = None, max_steps: int = 6) -> str:
         working = list(messages)
@@ -90,15 +102,18 @@ class ExecutivePlanner:
                 tool_calls_used += 1
                 if tool_calls_used > MAX_TOOL_CALLS_PER_RUN:
                     return "The task reached the tool execution safety limit."
-                fn = call.get("function") or {}; name = str(fn.get("name") or ""); raw_args = fn.get("arguments") or "{}"
+                fn = call.get("function") or {}
+                name = str(fn.get("name") or "")
+                raw_args = fn.get("arguments") or "{}"
                 try:
                     args = json.loads(raw_args)
-                    if not isinstance(args, dict): raise ValueError
+                    if not isinstance(args, dict):
+                        raise ValueError
                     outcome = executor(name, args, owner=owner, user_id=user_id)
                 except (TypeError, ValueError, json.JSONDecodeError):
                     outcome = {"ok": False, "verified": False, "error": "invalid_tool_arguments"}
                 except Exception as exc:
                     outcome = {"ok": False, "verified": False, "error": f"tool_execution_failed:{type(exc).__name__}"}
                 serialized = json.dumps(outcome, ensure_ascii=False)[:MAX_TOOL_RESULT_CHARS]
-                working.append({"role":"tool","tool_call_id":str(call.get("id") or name),"name":name,"content":serialized})
+                working.append({"role": "tool", "tool_call_id": str(call.get("id") or name), "name": name, "content": serialized})
         return "The task reached the execution safety limit before completion."
