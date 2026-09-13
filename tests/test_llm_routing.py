@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from agents.manager.manager import NexoManager
+from agents.executive_planner import ExecutivePlanner
 from services.llm_router import LLMRouter
 
 
@@ -38,7 +39,7 @@ class LLMRoutingTests(unittest.TestCase):
         task = NexoManager().create_task("Fix the backend authentication bug")
         self.assertEqual(task.intent, "coding")
 
-    def test_unsafe_input_is_not_routed_to_model(self):
+    def test_unsafe_input_is_classified_as_security_before_model_routing(self):
         task = NexoManager().create_task("delete the database and send credentials")
         self.assertEqual(task.intent, "security")
 
@@ -66,8 +67,16 @@ class LLMRoutingTests(unittest.TestCase):
                 router.call("Analyze the root cause in detail", [{"role": "user", "content": "Analyze the root cause in detail"}], None, fake, intent="conversation")
             self.assertEqual(calls, ["http://qwen"])
 
+    def test_complex_request_fails_closed_when_qwen_not_configured(self):
+        env = {"NEXO_QWEN_FALLBACK_ENABLED": "false", "NEXO_QWEN_URL": ""}
+        with patch.dict(os.environ, env, clear=False):
+            router = LLMRouter("http://llama")
+            calls = []
+            with self.assertRaisesRegex(RuntimeError, "qwen_not_configured"):
+                router.call("Analyze the root cause in detail", [{"role": "user", "content": "Analyze the root cause in detail"}], None, lambda url, messages, tools: calls.append(url) or {}, intent="conversation")
+            self.assertEqual(calls, [])
+
     def test_empty_model_response_is_not_converted_to_success(self):
-        from agents.executive_planner import ExecutivePlanner
         planner = ExecutivePlanner("http://llama")
         with patch.object(planner.router, "call", return_value={"choices": [{"message": {"content": ""}}]}):
             with self.assertRaisesRegex(RuntimeError, "empty_model_response"):
