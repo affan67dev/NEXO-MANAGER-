@@ -51,13 +51,17 @@ class NexoManager:
         if any(x in t for x in ("user", "support", "complaint", "email", "report")): return "support"
         if any(x in t for x in ("monitor", "health", "server", "uptime", "crash", "log")): return "monitoring"
         if any(x in t for x in ("test", "verify", "verification", "review", "check")): return "verification"
-        return "planning"
+        return "conversation"
 
     def create_task(self, request: str) -> Task:
         objective = (request or "").strip()
+        intent = self.classify(objective)
+        # Conversational requests are valid NEXO requests, but are not executable
+        # application tasks and therefore must not be rejected by APP_ONLY scope.
+        if intent == "conversation":
+            return Task(request=request, objective=objective, intent=intent, agent="manager")
         if not self.in_scope(objective):
             return Task(request=request, objective=objective, intent="out_of_scope", agent="manager")
-        intent = self.classify(objective)
         return Task(request=request, objective=objective, intent=intent, agent=intent, context={"request_received_at": uuid.uuid4().hex})
 
     def structured_task(self, request: str, *, task_id: str | None = None, dependencies: list[str] | None = None, required_tools: list[str] | None = None, expected_result: str = "", priority: str = "normal", parameters: dict[str, Any] | None = None, resources: list[str] | None = None, intent: str | None = None) -> Task:
