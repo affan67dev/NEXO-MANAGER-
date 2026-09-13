@@ -15,6 +15,7 @@ from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
 from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
+from core.router import create_task
 from core.semantic_memory import memory
 from services.document_parser import extract_text
 from services.security.guardrails import inspect as inspect_security
@@ -173,17 +174,37 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I can't treat that request as trusted instructions.")
             return
 
+        manager_task = create_task(text)
+        if manager_task.intent == "out_of_scope":
+            await update.message.reply_text("I can't process that request in the current NEXO scope.")
+            return
+
         session_id = get_or_create_session(user.id)
         turns = recent_turns(session_id, limit=8)
         memories = memory.search(text, limit=4, user_id=user.id)
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
         messages = build_llm_messages(text, turns, memory_text)
-        answer = await asyncio.to_thread(planner.run, text, messages, schemas(), execute_tool, owner=is_owner(user.id), user_id=user.id, max_steps=6)
+
+        # Conversation is a valid NEXO request, not an executable task. Do not send
+        # unrelated tool schemas to the local model for a conversational turn.
+        if manager_task.intent == "conversation":
+            answer = await asyncio.to_thread(
+                planner.run, text, messages, [], execute_tool,
+                owner=is_owner(user.id), user_id=user.id, max_steps=1,
+            )
+        else:
+            answer = await asyncio.to_thread(
+                planner.run, text, messages, schemas(), execute_tool,
+                owner=is_owner(user.id), user_id=user.id, max_steps=6,
+            )
+
+        if not answer.strip():
+            raise RuntimeError("empty_llm_answer")
         save_turn(session_id, user.id, "user", text)
         save_turn(session_id, user.id, "assistant", answer)
         await update.message.reply_text(answer[:4000])
-    except Exception:
-        logger.exception("Telegram request failed for user_id=%s", user.id)
+    except Exception as exc:
+        logger.exception("Telegram request failed for user_id=%s request=%r error=%s", user.id, (update.message.text or "").strip(), type(exc).__name__)
         await update.message.reply_text("Sorry, I couldn't complete that request right now.")
     finally:
         typing_task.cancel()
