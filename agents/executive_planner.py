@@ -56,8 +56,12 @@ class ExecutivePlanner:
         self.llama_url = llama_url
         self.router = LLMRouter(llama_url)
 
+    def _route_call(self, goal: str, messages: list[dict[str, Any]], tools, *, intent: str | None):
+        if intent is None:
+            return self.router.call(goal, messages, tools, ask)
+        return self.router.call(goal, messages, tools, ask, intent=intent)
+
     def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20, intent: str | None = None) -> list[dict[str, Any]]:
-        """Turn one user request into bounded, data-only executable work."""
         schema = {"tasks": [{
             "task_id": "task-1", "objective": "...", "intent": "...", "priority": "normal",
             "dependencies": [], "required_tools": [], "expected_result": "...",
@@ -75,7 +79,7 @@ class ExecutivePlanner:
         )}, {"role": "user", "content": goal}]
         if context:
             messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
-        result = self.router.call(goal, messages, None, ask, intent=intent)
+        result = self._route_call(goal, messages, None, intent=intent)
         parsed = _extract_json(str(_message(result).get("content") or ""))
         if isinstance(parsed, dict):
             parsed = parsed.get("tasks")
@@ -87,7 +91,7 @@ class ExecutivePlanner:
         working = list(messages)
         tool_calls_used = 0
         for _ in range(max(1, min(int(max_steps), 6))):
-            result = self.router.call(goal, working, tools, ask, intent=intent)
+            result = self._route_call(goal, working, tools, intent=intent)
             msg = _message(result)
             calls = msg.get("tool_calls") or []
             if not calls:
