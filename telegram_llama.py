@@ -77,6 +77,21 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
     return messages
 
 
+def _safe_failure_message(exc: Exception) -> str:
+    name = str(exc)
+    if name == "empty_model_response":
+        return "NEXO received an empty model response, so no answer was sent."
+    if name == "qwen_not_configured":
+        return "This request requires the Qwen model, but Qwen is not configured or enabled. No fallback answer was sent."
+    if name.startswith("qwen_failed"):
+        return "Qwen failed while processing this request. No fallback answer was sent."
+    if name.startswith("llama_failed_then_qwen_failed"):
+        return "LLaMA failed and the safe Qwen fallback also failed. No answer was sent."
+    if name.startswith("llama_unavailable") or name.startswith("llama_http"):
+        return "LLaMA could not process this request, and no valid fallback answer was available."
+    return "NEXO could not produce a verified answer for this request."
+
+
 async def typing_heartbeat(update: Update):
     try:
         while True:
@@ -165,8 +180,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I can't treat that request as trusted instructions.")
             return
 
-        # Security is completed before NEXO routing. The Manager only classifies
-        # the already-admitted request; it never bypasses guardrails.
         manager_task = create_task(text)
         if manager_task.intent == "out_of_scope":
             await update.message.reply_text("I can't process that request in the current NEXO scope.")
@@ -178,9 +191,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
         messages = build_llm_messages(text, turns, memory_text)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
-
-        # LLMRouter chooses exactly one model before the first model call. Qwen is
-        # only a fallback after a LLaMA failure, never a second default execution.
         answer = await asyncio.to_thread(
             planner.run, text, messages, tool_set, execute_tool,
             owner=is_owner(user.id), user_id=user.id, max_steps=1 if not tool_set else 6,
@@ -194,7 +204,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except Exception as exc:
         logger.exception("Telegram request failed for user_id=%s request=%r error=%s", user.id, (update.message.text or "").strip(), type(exc).__name__)
-        await update.message.reply_text("Sorry, I couldn't complete that request right now.")
+        await update.message.reply_text(_safe_failure_message(exc))
     finally:
         typing_task.cancel()
         await load_guard.release()
