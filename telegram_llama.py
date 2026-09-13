@@ -22,7 +22,7 @@ from services.security.guardrails import inspect as inspect_security
 from services.security.permissions import inspect_request
 from services.scheduler import scheduler
 from tool_registry import execute as execute_tool, schemas
-import nexo_tools  # registers tools
+import nexo_tools
 
 ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
@@ -61,7 +61,6 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
     if len(system) > MAX_SYSTEM_CHARS:
         system = system[:MAX_SYSTEM_CHARS - 500] + "\n[system prompt compacted for local context safety]\n" + system[-500:]
     system += "\n\nRelevant long-term memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
-
     selected: list[tuple[str, str]] = []
     used = 0
     for role, content in reversed(turns):
@@ -72,7 +71,6 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
         selected.append(item)
         used += cost
     selected.reverse()
-
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend({"role": role, "content": content} for role, content in selected)
     messages.append({"role": "user", "content": _clip(goal, MAX_GOAL_CHARS)})
@@ -140,24 +138,17 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         return
-
     admitted, reason = await load_guard.acquire(user.id)
     if not admitted:
-        messages = {
-            "rate_limited": "Please wait a moment before sending another request.",
-            "overloaded": "NEXO is busy right now. Please try again shortly.",
-            "queue_timeout": "NEXO is under heavy load. Please try again shortly.",
-        }
+        messages = {"rate_limited": "Please wait a moment before sending another request.", "overloaded": "NEXO is busy right now. Please try again shortly.", "queue_timeout": "NEXO is under heavy load. Please try again shortly."}
         await update.message.reply_text(messages.get(reason, "NEXO is temporarily busy. Please try again shortly."))
         return
-
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
             return
-
         text = (update.message.text or "").strip()
         if not text:
             return
@@ -174,6 +165,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I can't treat that request as trusted instructions.")
             return
 
+        # Security is completed before NEXO routing. The Manager only classifies
+        # the already-admitted request; it never bypasses guardrails.
         manager_task = create_task(text)
         if manager_task.intent == "out_of_scope":
             await update.message.reply_text("I can't process that request in the current NEXO scope.")
@@ -184,22 +177,18 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         memories = memory.search(text, limit=4, user_id=user.id)
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
         messages = build_llm_messages(text, turns, memory_text)
+        tool_set = [] if manager_task.intent == "conversation" else schemas()
 
-        # Conversation is a valid NEXO request, not an executable task. Do not send
-        # unrelated tool schemas to the local model for a conversational turn.
-        if manager_task.intent == "conversation":
-            answer = await asyncio.to_thread(
-                planner.run, text, messages, [], execute_tool,
-                owner=is_owner(user.id), user_id=user.id, max_steps=1,
-            )
-        else:
-            answer = await asyncio.to_thread(
-                planner.run, text, messages, schemas(), execute_tool,
-                owner=is_owner(user.id), user_id=user.id, max_steps=6,
-            )
-
-        if not answer.strip():
-            raise RuntimeError("empty_llm_answer")
+        # LLMRouter chooses exactly one model before the first model call. Qwen is
+        # only a fallback after a LLaMA failure, never a second default execution.
+        answer = await asyncio.to_thread(
+            planner.run, text, messages, tool_set, execute_tool,
+            owner=is_owner(user.id), user_id=user.id, max_steps=1 if not tool_set else 6,
+            intent=manager_task.intent,
+        )
+        answer = answer.strip()
+        if not answer:
+            raise RuntimeError("empty_model_response")
         save_turn(session_id, user.id, "user", text)
         save_turn(session_id, user.id, "assistant", answer)
         await update.message.reply_text(answer[:4000])
@@ -215,13 +204,7 @@ def main() -> None:
     global app
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .concurrent_updates(False)
-        .update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE))
-        .build()
-    )
+    app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
     scheduler.start(daily_briefing, daily_maintenance)
