@@ -5,7 +5,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,7 +49,7 @@ class TaskStore:
     def init(self):
         with self._lock, self._conn() as c:
             c.execute(
-                "CREATE TABLE IF NOT EXISTS nexo_tasks(" 
+                "CREATE TABLE IF NOT EXISTS nexo_tasks("
                 "task_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,objective TEXT NOT NULL,"
                 "intent TEXT NOT NULL DEFAULT 'unknown',priority TEXT NOT NULL,dependencies TEXT NOT NULL,"
                 "required_tools TEXT NOT NULL,expected_result TEXT NOT NULL,kind TEXT NOT NULL,"
@@ -59,11 +59,10 @@ class TaskStore:
                 "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)"
             )
             cols = {row[1] for row in c.execute("PRAGMA table_info(nexo_tasks)")}
-            migrations = {
+            for name, sql in {
                 "intent": "ALTER TABLE nexo_tasks ADD COLUMN intent TEXT NOT NULL DEFAULT 'unknown'",
                 "resources": "ALTER TABLE nexo_tasks ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'",
-            }
-            for name, sql in migrations.items():
+            }.items():
                 if name not in cols:
                     c.execute(sql)
             c.execute("CREATE INDEX IF NOT EXISTS idx_nexo_tasks_request ON nexo_tasks(request_id)")
@@ -77,12 +76,10 @@ class TaskStore:
                 "INSERT OR REPLACE INTO nexo_tasks(task_id,request_id,objective,intent,priority,dependencies,"
                 "required_tools,expected_result,kind,parameters,resources,state,attempts,max_retries,timeout_seconds,"
                 "result,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    spec.task_id, request_id, spec.objective, spec.intent, spec.priority,
-                    json.dumps(spec.dependencies), json.dumps(spec.required_tools), spec.expected_result,
-                    spec.kind, json.dumps(spec.parameters), json.dumps(spec.resources), state, 0,
-                    max(0, spec.max_retries), max(1, spec.timeout_seconds), None, None, n, n,
-                ),
+                (spec.task_id, request_id, spec.objective, spec.intent, spec.priority,
+                 json.dumps(spec.dependencies), json.dumps(spec.required_tools), spec.expected_result,
+                 spec.kind, json.dumps(spec.parameters), json.dumps(spec.resources), state, 0,
+                 max(0, spec.max_retries), max(1, spec.timeout_seconds), None, None, n, n),
             )
 
     def update(self, task_id: str, state: str, *, result=None, error=None, attempts=None):
@@ -104,7 +101,6 @@ class TaskStore:
         return [dict(zip(cols, row)) for row in rows]
 
     def recover_stale(self, *, max_age_seconds: int = 300):
-        """Move abandoned active executions back to queued/retryable state after a crash."""
         self.init()
         cutoff = datetime.fromtimestamp(datetime.now().timestamp() - max(1, max_age_seconds), tz=timezone.utc).isoformat()
         recovered = []
@@ -181,10 +177,14 @@ class TaskOrchestrator:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             while pending or running:
                 for task in list(pending.values()):
-                    failed_dep = any(dep in done and done[dep].get("state") in {"failed", "cancelled"} for dep in task.dependencies)
-                    if failed_dep:
+                    dep_states = {done[d].get("state") for d in task.dependencies if d in done}
+                    if "failed" in dep_states or "cancelled" in dep_states:
                         self.store.update(task.task_id, "cancelled", error="dependency_failed")
                         done[task.task_id] = {"task_id": task.task_id, "state": "cancelled", "error": "dependency_failed"}
+                        pending.pop(task.task_id, None)
+                    elif "waiting_confirmation" in dep_states:
+                        self.store.update(task.task_id, "waiting_confirmation", error="dependency_confirmation_required")
+                        done[task.task_id] = {"task_id": task.task_id, "state": "waiting_confirmation", "error": "dependency_confirmation_required"}
                         pending.pop(task.task_id, None)
 
                 for task in pending.values():
@@ -192,33 +192,31 @@ class TaskOrchestrator:
                         self.store.update(task.task_id, "waiting")
 
                 active_tasks = list(running.values())
-                candidates = sorted(
-                    (task for task in pending.values() if ready(task)),
-                    key=lambda t: (self.PRIORITY.get(str(t.priority).lower(), 2), t.task_id),
-                )
+                candidates = sorted((task for task in pending.values() if ready(task)), key=lambda t: (self.PRIORITY.get(str(t.priority).lower(), 2), t.task_id))
                 for task in candidates:
                     if len(running) >= workers:
                         break
                     if any(self._resource_conflict(task, active) for active in active_tasks):
                         continue
                     self.store.update(task.task_id, "running", attempts=0)
-                    future = pool.submit(self._execute_with_retry, task, executor)
-                    running[future] = task
+                    running[pool.submit(self._execute_with_retry, task, executor)] = task
                     active_tasks.append(task)
                     pending.pop(task.task_id, None)
 
                 if not running:
                     if pending:
+                        # Waiting for an external confirmation is a valid suspended state, not a crash.
+                        if all(any(d in done and done[d].get("state") == "waiting_confirmation" for d in task.dependencies) or any(d not in done for d in task.dependencies) for task in pending.values()):
+                            break
                         raise RuntimeError("task_orchestration_stalled")
                     break
 
                 for future in as_completed(list(running)):
                     task = running.pop(future)
                     try:
-                        result = future.result()
+                        result = dict(future.result() or {})
                     except Exception as exc:
                         result = {"ok": False, "verified": False, "error": f"orchestrator_error:{type(exc).__name__}", "attempts": 1}
-                    result = dict(result or {})
                     state = "waiting_confirmation" if result.get("requires_confirmation") else ("completed" if result.get("ok") and result.get("verified") else "failed")
                     self.store.update(task.task_id, state, result=result, error=None if state in {"completed", "waiting_confirmation"} else str(result.get("error") or "unverified_result"), attempts=int(result.get("attempts", 1)))
                     done[task.task_id] = {"task_id": task.task_id, "state": state, **result}
@@ -226,27 +224,43 @@ class TaskOrchestrator:
 
         return [done[t.task_id] for t in items]
 
+    @staticmethod
+    def _call_with_timeout(executor, task, timeout_seconds):
+        result_holder: dict[str, Any] = {}
+        finished = threading.Event()
+
+        def target():
+            try:
+                result_holder["result"] = executor(task)
+            except Exception as exc:
+                result_holder["exception"] = exc
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=target, name=f"nexo-task-{task.task_id}", daemon=True)
+        thread.start()
+        if not finished.wait(timeout=max(1, timeout_seconds)):
+            return {"ok": False, "verified": False, "error": "task_timeout", "retryable": False, "permanent": False}
+        if "exception" in result_holder:
+            raise result_holder["exception"]
+        return result_holder.get("result") or {"ok": False, "verified": False, "error": "empty_executor_result"}
+
     def _execute_with_retry(self, task: TaskSpec, executor):
         attempts = 0
         last = {"ok": False, "verified": False, "error": "not_executed"}
         while attempts <= max(0, task.max_retries):
             attempts += 1
             self.store.update(task.task_id, "retrying" if attempts > 1 else "running", attempts=attempts)
-            future = ThreadPoolExecutor(max_workers=1).submit(executor, task)
             try:
-                result = future.result(timeout=max(1, task.timeout_seconds))
-                result = result or {"ok": False, "verified": False, "error": "empty_executor_result"}
-            except TimeoutError:
-                future.cancel()
-                result = {"ok": False, "verified": False, "error": "task_timeout", "permanent": False}
+                result = self._call_with_timeout(executor, task, task.timeout_seconds)
             except Exception as exc:
-                result = {"ok": False, "verified": False, "error": f"executor_error:{type(exc).__name__}"}
-            result = dict(result)
+                result = {"ok": False, "verified": False, "error": f"executor_error:{type(exc).__name__}", "retryable": True}
+            result = dict(result or {})
             result["attempts"] = attempts
             if result.get("ok") and result.get("verified"):
                 return result
             last = result
-            if result.get("permanent") or result.get("requires_confirmation"):
+            if result.get("permanent") or result.get("requires_confirmation") or result.get("retryable") is False:
                 break
         return last
 
@@ -263,16 +277,11 @@ def specs_from_plan(plan):
             timeout, retries = 90, 2
         resources = item.get("resources") if isinstance(item.get("resources"), list) else []
         tasks.append(TaskSpec(
-            objective=str(item["objective"]).strip(),
-            task_id=str(item.get("task_id") or f"task-{uuid.uuid4().hex[:10]}"),
-            intent=str(item.get("intent") or "unknown"),
-            priority=str(item.get("priority") or "normal"),
-            dependencies=[str(d) for d in item.get("dependencies", [])],
-            required_tools=[str(d) for d in item.get("required_tools", [])],
-            expected_result=str(item.get("expected_result") or ""),
-            kind=str(item.get("kind") or "sequential"),
-            timeout_seconds=max(1, min(timeout, 600)),
-            max_retries=max(0, min(retries, 5)),
+            objective=str(item["objective"]).strip(), task_id=str(item.get("task_id") or f"task-{uuid.uuid4().hex[:10]}"),
+            intent=str(item.get("intent") or "unknown"), priority=str(item.get("priority") or "normal"),
+            dependencies=[str(d) for d in item.get("dependencies", [])], required_tools=[str(d) for d in item.get("required_tools", [])],
+            expected_result=str(item.get("expected_result") or ""), kind=str(item.get("kind") or "sequential"),
+            timeout_seconds=max(1, min(timeout, 600)), max_retries=max(0, min(retries, 5)),
             parameters=item.get("parameters") if isinstance(item.get("parameters"), dict) else {},
             resources=[str(r) for r in resources if str(r).strip()],
         ))
