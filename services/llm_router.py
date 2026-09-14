@@ -18,6 +18,13 @@ def _positive_int(name: str, default: int) -> int:
         return default
 
 
+def _nonnegative_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default)).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
 def _nonnegative_float(name: str, default: float) -> float:
     try:
         return max(0.0, float(os.getenv(name, str(default)).strip()))
@@ -47,7 +54,7 @@ class LLMRouter:
         self.secondary_url = os.getenv("NEXO_QWEN_URL", "").strip()
         self.enabled = os.getenv("NEXO_QWEN_FALLBACK_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
         self.complexity_chars = _positive_int("NEXO_QWEN_COMPLEXITY_CHARS", DEFAULT_COMPLEXITY_CHARS)
-        self.retries = _positive_int("NEXO_LLM_RETRIES", DEFAULT_RETRIES)
+        self.retries = _nonnegative_int("NEXO_LLM_RETRIES", DEFAULT_RETRIES)
         self.backoff = _nonnegative_float("NEXO_LLM_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
 
     def _secondary_available(self) -> bool:
