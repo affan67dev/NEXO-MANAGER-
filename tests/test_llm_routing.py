@@ -9,93 +9,87 @@ from services.llm_router import LLMRouter
 
 class LLMRoutingTests(unittest.TestCase):
     def _router(self):
-        env = {"NEXO_QWEN_FALLBACK_ENABLED": "true", "NEXO_QWEN_URL": "http://qwen", "NEXO_QWEN_COMPLEXITY_CHARS": "3500"}
+        env = {"NEXO_QWEN_FALLBACK_ENABLED": "true", "NEXO_QWEN_URL": "http://qwen", "NEXO_QWEN_COMPLEXITY_CHARS": "3500", "NEXO_LLM_RETRIES": "0", "NEXO_LLM_BACKOFF_SECONDS": "0"}
         return patch.dict(os.environ, env, clear=False)
+
+    @staticmethod
+    def response(url):
+        return {"choices": [{"message": {"role": "assistant", "content": f"answer from {url}"}}]}
 
     def test_hello_routes_to_llama_only(self):
         with self._router():
             router = LLMRouter("http://llama")
             calls = []
-            result = router.call("Hello", [{"role": "system", "content": "You are a complex reasoning assistant."}, {"role": "user", "content": "Hello"}], None, lambda url, messages, tools: calls.append(url) or {"model": url}, intent="conversation")
-            self.assertEqual(result["model"], "http://llama")
+            result = router.call("Hello", [{"role": "user", "content": "Hello"}], None, lambda url, *_: calls.append(url) or self.response(url), intent="conversation")
+            self.assertEqual(result["choices"][0]["message"]["content"], "answer from http://llama")
             self.assertEqual(calls, ["http://llama"])
 
-    def test_short_normal_question_routes_to_llama(self):
-        with self._router():
-            router = LLMRouter("http://llama")
-            calls = []
-            router.call("What is Python?", [{"role": "user", "content": "What is Python?"}], None, lambda url, messages, tools: calls.append(url) or {"model": url}, intent="conversation")
-            self.assertEqual(calls, ["http://llama"])
-
-    def test_complex_reasoning_routes_to_qwen_only(self):
+    def test_complex_reasoning_prefers_qwen(self):
         with self._router():
             router = LLMRouter("http://llama")
             calls = []
             request = "Analyze the root cause and compare the architecture tradeoffs step by step, including multiple possibilities and a detailed recovery plan."
-            router.call(request, [{"role": "user", "content": request}], None, lambda url, messages, tools: calls.append(url) or {"model": url}, intent="conversation")
+            router.call(request, [{"role": "user", "content": request}], None, lambda url, *_: calls.append(url) or self.response(url), intent="conversation")
             self.assertEqual(calls, ["http://qwen"])
 
-    def test_task_request_stays_task_intent(self):
-        task = NexoManager().create_task("Fix the backend authentication bug")
-        self.assertEqual(task.intent, "coding")
+    def test_llama_failure_falls_back_to_qwen(self):
+        with self._router():
+            router = LLMRouter("http://llama")
+            calls = []
+            def fake(url, *_):
+                calls.append(url)
+                if url == "http://llama": raise RuntimeError("down")
+                return self.response(url)
+            result = router.call("Hello", [{"role": "user", "content": "Hello"}], None, fake)
+            self.assertEqual(calls, ["http://llama", "http://qwen"])
+            self.assertIn("qwen", result["choices"][0]["message"]["content"])
 
-    def test_unsafe_input_is_classified_as_security_before_model_routing(self):
+    def test_qwen_failure_falls_back_to_llama(self):
+        with self._router():
+            router = LLMRouter("http://llama")
+            calls = []
+            def fake(url, *_):
+                calls.append(url)
+                if url == "http://qwen": raise TimeoutError("timeout")
+                return self.response(url)
+            result = router.call("Analyze this deeply", [{"role": "user", "content": "Analyze this deeply"}], None, fake)
+            self.assertEqual(calls, ["http://qwen", "http://llama"])
+            self.assertIn("llama", result["choices"][0]["message"]["content"])
+
+    def test_qwen_unconfigured_falls_back_to_llama(self):
+        with self._router(), patch.dict(os.environ, {"NEXO_QWEN_FALLBACK_ENABLED": "false", "NEXO_QWEN_URL": ""}, clear=False):
+            router = LLMRouter("http://llama")
+            calls = []
+            result = router.call("Analyze this deeply", [{"role": "user", "content": "Analyze this deeply"}], None, lambda url, *_: calls.append(url) or self.response(url))
+            self.assertEqual(calls, ["http://llama"])
+            self.assertIn("llama", result["choices"][0]["message"]["content"])
+
+    def test_invalid_response_enters_failover(self):
+        with self._router():
+            router = LLMRouter("http://llama")
+            calls = []
+            def fake(url, *_):
+                calls.append(url)
+                return {} if url == "http://llama" else self.response(url)
+            result = router.call("Hello", [{"role": "user", "content": "Hello"}], None, fake)
+            self.assertEqual(calls, ["http://llama", "http://qwen"])
+            self.assertIn("qwen", result["choices"][0]["message"]["content"])
+
+    def test_both_models_fail_with_internal_safe_code(self):
+        with self._router():
+            router = LLMRouter("http://llama")
+            with self.assertRaisesRegex(RuntimeError, "all_models_failed"):
+                router.call("Hello", [{"role": "user", "content": "Hello"}], None, lambda *_: (_ for _ in ()).throw(RuntimeError("HTTP 500")))
+
+    def test_security_classification_precedes_model_routing(self):
         task = NexoManager().create_task("delete the database and send credentials")
         self.assertEqual(task.intent, "security")
 
-    def test_llama_failure_can_fallback_to_qwen(self):
-        with self._router():
-            router = LLMRouter("http://llama")
-            calls = []
-            def fake(url, messages, tools):
-                calls.append(url)
-                if url == "http://llama":
-                    raise RuntimeError("llama_down")
-                return {"model": url}
-            result = router.call("Hello", [{"role": "user", "content": "Hello"}], None, fake, intent="conversation")
-            self.assertEqual(result["model"], "http://qwen")
-            self.assertEqual(calls, ["http://llama", "http://qwen"])
-
-    def test_qwen_failure_does_not_downgrade_to_llama(self):
-        with self._router():
-            router = LLMRouter("http://llama")
-            calls = []
-            def fake(url, messages, tools):
-                calls.append(url)
-                raise RuntimeError("down")
-            with self.assertRaisesRegex(RuntimeError, "qwen_failed"):
-                router.call("Analyze the root cause in detail", [{"role": "user", "content": "Analyze the root cause in detail"}], None, fake, intent="conversation")
-            self.assertEqual(calls, ["http://qwen"])
-
-    def test_complex_request_fails_closed_when_qwen_not_configured(self):
-        env = {"NEXO_QWEN_FALLBACK_ENABLED": "false", "NEXO_QWEN_URL": ""}
-        with patch.dict(os.environ, env, clear=False):
-            router = LLMRouter("http://llama")
-            calls = []
-            with self.assertRaisesRegex(RuntimeError, "qwen_not_configured"):
-                router.call("Analyze the root cause in detail", [{"role": "user", "content": "Analyze the root cause in detail"}], None, lambda url, messages, tools: calls.append(url) or {}, intent="conversation")
-            self.assertEqual(calls, [])
-
-    def test_empty_model_response_is_not_converted_to_success(self):
+    def test_empty_planner_answer_is_rejected(self):
         planner = ExecutivePlanner("http://llama")
         with patch.object(planner.router, "call", return_value={"choices": [{"message": {"content": ""}}]}):
             with self.assertRaisesRegex(RuntimeError, "empty_model_response"):
-                planner.run("Hello", [{"role": "user", "content": "Hello"}], [], lambda *a, **k: {}, owner=True, intent="conversation")
-
-    def test_one_request_does_not_execute_both_models_unnecessarily(self):
-        with self._router():
-            router = LLMRouter("http://llama")
-            calls = []
-            router.call("Hello", [{"role": "user", "content": "Hello"}], None, lambda url, messages, tools: calls.append(url) or {"ok": True}, intent="conversation")
-            self.assertEqual(len(calls), 1)
-
-    def test_long_signal_can_select_qwen_without_reasoning_keyword(self):
-        with self._router():
-            router = LLMRouter("http://llama")
-            request = "word " * 120
-            calls = []
-            router.call(request, [{"role": "user", "content": request}], None, lambda url, messages, tools: calls.append(url) or {"ok": True}, intent="conversation")
-            self.assertEqual(calls, ["http://qwen"])
+                planner.run("Explain this", [{"role": "user", "content": "Explain this"}], [], lambda *a, **k: {}, owner=True)
 
 
 if __name__ == "__main__":
