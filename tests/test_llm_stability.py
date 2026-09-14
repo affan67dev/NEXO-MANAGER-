@@ -39,7 +39,7 @@ class LLMStabilityTests(unittest.TestCase):
             router.call("analyze this deeply", [{"role": "user", "content": "analyze this deeply"}], None, lambda url, *_: calls.append(url) or self.success(url))
             self.assertEqual(calls, ["http://qwen"])
 
-    def test_qwen_failure_falls_back_to_llama(self):
+    def test_qwen_timeout_falls_back_to_llama(self):
         with self.env():
             router = LLMRouter("http://llama")
             calls = []
@@ -52,20 +52,20 @@ class LLMStabilityTests(unittest.TestCase):
             self.assertEqual(calls, ["http://qwen", "http://qwen", "http://llama"])
             self.assertIn("llama", result["choices"][0]["message"]["content"])
 
-    def test_llama_failure_falls_back_to_qwen(self):
+    def test_llama_timeout_falls_back_to_qwen(self):
         with self.env():
             router = LLMRouter("http://llama")
             calls = []
             def fake(url, *_):
                 calls.append(url)
                 if url == "http://llama":
-                    raise ConnectionError("down")
+                    raise TimeoutError("timeout")
                 return self.success(url)
             result = router.call("hello", [{"role": "user", "content": "hello"}], None, fake)
             self.assertEqual(calls, ["http://llama", "http://llama", "http://qwen"])
             self.assertIn("qwen", result["choices"][0]["message"]["content"])
 
-    def test_http_failure_and_both_failure_are_safe(self):
+    def test_http_failure_and_both_models_failure_are_safe(self):
         with self.env():
             router = LLMRouter("http://llama")
             with self.assertRaisesRegex(RuntimeError, "all_models_failed"):
@@ -75,11 +75,12 @@ class LLMStabilityTests(unittest.TestCase):
         with self.env(NEXO_QWEN_FALLBACK_ENABLED="false", NEXO_QWEN_URL=""):
             router = LLMRouter("http://llama")
             calls = []
-            result = router.call("analyze this deeply", [{"role": "user", "content": "analyze this deeply"}], None, lambda url, *_: calls.append(url) or self.success(url))
+            request = "Analyze this deeply"
+            result = router.call(request, [{"role": "user", "content": request}], None, lambda url, *_: calls.append(url) or self.success(url))
             self.assertEqual(calls, ["http://llama"])
             self.assertIn("llama", result["choices"][0]["message"]["content"])
 
-    def test_empty_and_malformed_model_responses_fail_over(self):
+    def test_empty_response_fails_over(self):
         with self.env():
             router = LLMRouter("http://llama")
             calls = []
@@ -87,6 +88,19 @@ class LLMStabilityTests(unittest.TestCase):
                 calls.append(url)
                 if url == "http://llama":
                     return {"choices": [{"message": {"content": ""}}]}
+                return self.success(url)
+            result = router.call("hello", [{"role": "user", "content": "hello"}], None, fake)
+            self.assertEqual(calls, ["http://llama", "http://llama", "http://qwen"])
+            self.assertIn("qwen", result["choices"][0]["message"]["content"])
+
+    def test_malformed_response_fails_over(self):
+        with self.env():
+            router = LLMRouter("http://llama")
+            calls = []
+            def fake(url, *_):
+                calls.append(url)
+                if url == "http://llama":
+                    return {"unexpected": "shape"}
                 return self.success(url)
             result = router.call("hello", [{"role": "user", "content": "hello"}], None, fake)
             self.assertEqual(calls, ["http://llama", "http://llama", "http://qwen"])
@@ -104,10 +118,12 @@ class LLMStabilityTests(unittest.TestCase):
         responses = [
             {"choices": [{"message": {"tool_calls": [{"id": "1", "function": {"name": "do_action", "arguments": "{\"x\":1}"}}]}}]},
             {"choices": [{"message": {"tool_calls": [{"id": "2", "function": {"name": "do_action", "arguments": "{\"x\":1}"}}]}}]},
+            {"choices": [{"message": {"content": "Action already completed."}}]},
         ]
         with patch.object(planner.router, "call", side_effect=responses):
-            result = planner.run("do the action", [{"role": "user", "content": "do the action"}], [{}], lambda *a, **k: calls.append(1) or {"ok": True}, owner=True, max_steps=2)
+            result = planner.run("do the action", [{"role": "user", "content": "do the action"}], [{}], lambda *a, **k: calls.append(1) or {"ok": True}, owner=True, max_steps=3)
         self.assertEqual(calls, [1])
+        self.assertEqual(result, "Action already completed.")
 
 
 if __name__ == "__main__":
