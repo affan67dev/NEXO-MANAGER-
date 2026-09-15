@@ -9,21 +9,32 @@ from typing import Any
 
 from services.llm_router import LLMRouter
 
-LLAMA_TIMEOUT_SECONDS = 75
-DEFAULT_MAX_TOKENS = 384
+QWEN_TIMEOUT_SECONDS = 120
+DEFAULT_MAX_TOKENS = 768
 MAX_TOOL_CALLS_PER_RUN = 6
 MAX_TOOL_RESULT_CHARS = 4000
 
 
 def _timeout_seconds() -> float:
     try:
-        return max(1.0, float(os.getenv("NEXO_LLM_READ_TIMEOUT_SECONDS", str(LLAMA_TIMEOUT_SECONDS))))
+        return max(1.0, float(os.getenv("NEXO_LLM_READ_TIMEOUT_SECONDS", str(QWEN_TIMEOUT_SECONDS))))
     except (TypeError, ValueError):
-        return LLAMA_TIMEOUT_SECONDS
+        return QWEN_TIMEOUT_SECONDS
+
+
+def _thinking_disabled() -> bool:
+    return os.getenv("NEXO_QWEN_DISABLE_THINKING", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int = DEFAULT_MAX_TOKENS) -> dict[str, Any]:
-    payload: dict[str, Any] = {"messages": messages, "temperature": 0.15, "max_tokens": max(1, min(int(max_tokens), DEFAULT_MAX_TOKENS)), "stream": False}
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "temperature": 0.15,
+        "max_tokens": max(1, min(int(max_tokens), DEFAULT_MAX_TOKENS)),
+        "stream": False,
+    }
+    if _thinking_disabled():
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -43,6 +54,17 @@ def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | 
 def _message(data: dict[str, Any]) -> dict[str, Any]:
     msg = (data.get("choices") or [{}])[0].get("message") or {}
     return msg if isinstance(msg, dict) else {}
+
+
+def _clean_response_text(content: Any, reasoning_content: Any = "") -> str:
+    """Return only user-facing final text; never expose Qwen reasoning traces."""
+    text = str(content or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<think>.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"</think>", "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 
 def _extract_json(text: str) -> Any:
@@ -70,13 +92,11 @@ def _tool_key(call: dict[str, Any]) -> str:
 
 
 class ExecutivePlanner:
-    def __init__(self, llama_url: str):
-        self.llama_url = llama_url
-        self.router = LLMRouter(llama_url)
+    def __init__(self, qwen_url: str):
+        self.qwen_url = qwen_url
+        self.router = LLMRouter(qwen_url)
 
     def _route_call(self, goal: str, messages: list[dict[str, Any]], tools, *, intent: str | None):
-        if intent is None:
-            return self.router.call(goal, messages, tools, ask)
         return self.router.call(goal, messages, tools, ask, intent=intent)
 
     def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20, intent: str | None = None) -> list[dict[str, Any]]:
@@ -85,7 +105,7 @@ class ExecutivePlanner:
         if context:
             messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
         result = self._route_call(goal, messages, None, intent=intent)
-        parsed = _extract_json(str(_message(result).get("content") or ""))
+        parsed = _extract_json(_clean_response_text(_message(result).get("content"), _message(result).get("reasoning_content")))
         if isinstance(parsed, dict):
             parsed = parsed.get("tasks")
         if not isinstance(parsed, list):
@@ -101,7 +121,7 @@ class ExecutivePlanner:
             msg = _message(result)
             calls = msg.get("tool_calls") or []
             if not calls:
-                answer = str(msg.get("content") or "").strip()
+                answer = _clean_response_text(msg.get("content"), msg.get("reasoning_content"))
                 if not answer:
                     raise RuntimeError("empty_model_response")
                 return answer

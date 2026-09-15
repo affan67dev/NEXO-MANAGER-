@@ -41,11 +41,6 @@ class NexoManager:
         return any(k in t for k in keywords)
 
     def classify(self, text: str) -> str:
-        """Semantic-first coarse intent used before model selection.
-
-        This is deliberately deterministic: it does not invoke either model merely
-        to decide which model should receive the request.
-        """
         t = (text or "").strip().lower()
         if not t:
             return "conversation"
@@ -60,11 +55,6 @@ class NexoManager:
         return "conversation"
 
     def complexity_signals(self, text: str) -> dict[str, Any]:
-        """Return routing signals without executing a model.
-
-        Length is only one signal. Semantic indicators and task type are considered
-        first so long greetings/history do not automatically select Qwen.
-        """
         t = (text or "").strip().lower()
         reasoning_terms = (
             "analyze", "analyse", "reason", "reasoning", "compare", "tradeoff",
@@ -84,8 +74,6 @@ class NexoManager:
     def create_task(self, request: str) -> Task:
         objective = (request or "").strip()
         intent = self.classify(objective)
-        # Conversational requests are valid NEXO requests, but are not executable
-        # application tasks and therefore must not be rejected by APP_ONLY scope.
         if intent == "conversation":
             return Task(request=request, objective=objective, intent=intent, agent="manager")
         if not self.in_scope(objective):
@@ -106,7 +94,7 @@ class NexoManager:
         return task
 
     def status(self) -> dict[str, Any]:
-        return {"identity": "NEXO", "manager_model": "Llama", "phase": self.scope["phase"], "mode": self.scope["mode"], "active_scope": self.scope["active_scope"], "deferred_scope": self.scope["deferred_scope"]}
+        return {"identity": "NEXO", "manager_model": "Qwen3-4B", "phase": self.scope["phase"], "mode": self.scope["mode"], "active_scope": self.scope["active_scope"], "deferred_scope": self.scope["deferred_scope"]}
 
 
 if __name__ == "__main__":

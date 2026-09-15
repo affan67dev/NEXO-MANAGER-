@@ -28,7 +28,7 @@ ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-LLAMA_URL = os.getenv("LLAMA_URL", "http://127.0.0.1:8080/v1/chat/completions").strip()
+QWEN_URL = (os.getenv("NEXO_QWEN_URL", "").strip() or os.getenv("LLAMA_URL", "http://127.0.0.1:8080/v1/chat/completions").strip())
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
@@ -37,7 +37,7 @@ LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
 logger = logging.getLogger("nexo.telegram")
-planner = ExecutivePlanner(LLAMA_URL)
+planner = ExecutivePlanner(QWEN_URL)
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_SYSTEM_CHARS = 6500
 MAX_MEMORY_CHARS = 1000
@@ -79,7 +79,7 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
 
 
 def _safe_failure_message() -> str:
-    return "Sorry, I couldn't find a reliable answer for this."
+    return "NEXO couldn't complete that request right now. The error has been logged."
 
 
 async def typing_heartbeat(update: Update):
@@ -208,11 +208,13 @@ def main() -> None:
     global app
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    if not QWEN_URL:
+        raise RuntimeError("NEXO_QWEN_URL/LLAMA_URL is not configured")
     app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
     scheduler.start(daily_briefing, daily_maintenance)
-    logger.info("NEXO unified Telegram runtime starting")
+    logger.info("NEXO unified Telegram runtime starting with single Qwen endpoint=%s", QWEN_URL)
     app.run_polling(drop_pending_updates=True)
 
 
