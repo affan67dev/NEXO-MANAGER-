@@ -41,9 +41,15 @@ class OrchestratorTests(unittest.TestCase):
         start=time.monotonic(); result=self.orch.run("rt",[x],run)[0]; elapsed=time.monotonic()-start
         self.assertTrue(started.is_set()); self.assertLess(elapsed,1.8); self.assertEqual(result["state"],"failed"); self.assertEqual(result["attempts"],1)
     def test_resource_conflict_serializes_shared_device(self):
-        active=0; maximum=0; lock=threading.Lock(); tasks=[TaskSpec("one",task_id="a",resources=["device:audio"]),TaskSpec("two",task_id="b",resources=["device:audio"]),TaskSpec("three",task_id="c",resources=["device:window"])]
+        active=0; maximum=0; lock=threading.Lock()
+        started={"audio":threading.Event(),"window":threading.Event()}
+        tasks=[TaskSpec("one",task_id="a",resources=["device:audio"]),TaskSpec("two",task_id="b",resources=["device:audio"]),TaskSpec("three",task_id="c",resources=["device:window"])]
         def run(task):
             nonlocal active,maximum
+            kind="window" if task.task_id=="c" else "audio"
+            other="audio" if kind=="window" else "window"
+            started[kind].set()
+            self.assertTrue(started[other].wait(timeout=2), f"{kind} task did not overlap with independent resource task")
             with lock: active+=1; maximum=max(maximum,active)
             time.sleep(.05)
             with lock: active-=1

@@ -61,9 +61,9 @@ class TelegramNexoFlowTests(unittest.IsolatedAsyncioTestCase):
         async def fake_attachment(*_): return None
         async def fake_acquire(_): return True, "ok"
         async def fake_release(): return None
-        with patch.object(telegram_llama.load_guard, "acquire", fake_acquire), patch.object(telegram_llama.load_guard, "release", fake_release), patch.object(telegram_llama, "typing_heartbeat", fake_heartbeat), patch.object(telegram_llama, "handle_attachment", fake_attachment), patch.object(telegram_llama.planner, "run", side_effect=RuntimeError("all_models_failed: HTTP 500 secret")), patch.object(telegram_llama, "get_or_create_session", return_value="s1"), patch.object(telegram_llama, "recent_turns", return_value=[]), patch.object(telegram_llama.memory, "search", return_value=[]):
+        with patch.object(telegram_llama.load_guard, "acquire", fake_acquire), patch.object(telegram_llama.load_guard, "release", fake_release), patch.object(telegram_llama, "typing_heartbeat", fake_heartbeat), patch.object(telegram_llama.planner, "run", side_effect=RuntimeError("qwen_request_failed")), patch.object(telegram_llama, "get_or_create_session", return_value="s1"), patch.object(telegram_llama, "recent_turns", return_value=[]), patch.object(telegram_llama.memory, "search", return_value=[]):
             await telegram_llama.chat(update, SimpleNamespace())
-        self.assertEqual(update.message.reply_text.await_args.args[0], "Sorry, I couldn't find a reliable answer for this.")
+        self.assertEqual(update.message.reply_text.await_args.args[0], "NEXO couldn't complete that request right now. The error has been logged.")
         self.assertEqual(update.message.reply_text.await_count, 1)
 
 

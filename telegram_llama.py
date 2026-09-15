@@ -28,7 +28,7 @@ ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-QWEN_URL = (os.getenv("NEXO_QWEN_URL", "").strip() or os.getenv("LLAMA_URL", "http://127.0.0.1:8080/v1/chat/completions").strip())
+QWEN_URL = os.getenv("NEXO_QWEN_URL", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
@@ -39,11 +39,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("nexo.telegram")
 planner = ExecutivePlanner(QWEN_URL)
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
-MAX_SYSTEM_CHARS = 6500
-MAX_MEMORY_CHARS = 1000
-MAX_TURNS_CHARS = 2000
-MAX_TURN_CHARS = 700
-MAX_GOAL_CHARS = 2000
+MAX_MEMORY_CHARS = 600
+MAX_TURNS_CHARS = 900
+MAX_TURN_CHARS = 300
 MAX_UPDATE_QUEUE = 20
 FAST_PATH_MESSAGES = {"hi", "hello", "hey", "hiya", "thanks", "thank you", "ok", "okay"}
 app: Application | None = None
@@ -59,8 +57,6 @@ def _clip(text: str, limit: int) -> str:
 
 def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str) -> list[dict[str, str]]:
     system = SYSTEM
-    if len(system) > MAX_SYSTEM_CHARS:
-        system = system[:MAX_SYSTEM_CHARS - 500] + "\n[system prompt compacted for local context safety]\n" + system[-500:]
     system += "\n\nRelevant long-term memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
     selected: list[tuple[str, str]] = []
     used = 0
@@ -68,13 +64,15 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
         item = (role, _clip(content, MAX_TURN_CHARS))
         cost = len(item[1])
         if used + cost > MAX_TURNS_CHARS:
-            break
+            continue
         selected.append(item)
         used += cost
     selected.reverse()
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend({"role": role, "content": content} for role, content in selected)
-    messages.append({"role": "user", "content": _clip(goal, MAX_GOAL_CHARS)})
+    # Never silently truncate the current user message. The Qwen context fitter
+    # either preserves it in full or returns a precise context-budget failure.
+    messages.append({"role": "user", "content": goal})
     return messages
 
 
@@ -196,6 +194,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_turn(session_id, user.id, "user", text)
         save_turn(session_id, user.id, "assistant", answer)
         await update.message.reply_text(answer[:4000])
+    except RuntimeError as exc:
+        logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
+        if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
+            await update.message.reply_text("That message is too large for NEXO's current local Qwen context. Please send a shorter request.")
+        else:
+            await update.message.reply_text(_safe_failure_message())
     except Exception:
         logger.exception("Telegram request failed for user_id=%s", user.id)
         await update.message.reply_text(_safe_failure_message())
@@ -209,7 +213,7 @@ def main() -> None:
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
     if not QWEN_URL:
-        raise RuntimeError("NEXO_QWEN_URL/LLAMA_URL is not configured")
+        raise RuntimeError("NEXO_QWEN_URL is not configured")
     app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
