@@ -8,9 +8,10 @@ import urllib.request
 from typing import Any
 
 from services.llm_router import LLMRouter
+from services.context_budget import fit_messages, output_tokens
 
 QWEN_TIMEOUT_SECONDS = 120
-DEFAULT_MAX_TOKENS = 768
+DEFAULT_MAX_TOKENS = 256
 MAX_TOOL_CALLS_PER_RUN = 6
 MAX_TOOL_RESULT_CHARS = 4000
 
@@ -30,7 +31,7 @@ def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | 
     payload: dict[str, Any] = {
         "messages": messages,
         "temperature": 0.15,
-        "max_tokens": max(1, min(int(max_tokens), DEFAULT_MAX_TOKENS)),
+        "max_tokens": max(1, min(int(max_tokens), output_tokens())),
         "stream": False,
     }
     if _thinking_disabled():
@@ -97,13 +98,14 @@ class ExecutivePlanner:
         self.router = LLMRouter(qwen_url)
 
     def _route_call(self, goal: str, messages: list[dict[str, Any]], tools, *, intent: str | None):
-        return self.router.call(goal, messages, tools, ask, intent=intent)
+        fitted = fit_messages(self.qwen_url, messages, tools)
+        return self.router.call(goal, fitted, tools, ask, intent=intent)
 
     def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20, intent: str | None = None) -> list[dict[str, Any]]:
         schema = {"tasks": [{"task_id": "task-1", "objective": "...", "intent": "...", "priority": "normal", "dependencies": [], "required_tools": [], "expected_result": "...", "kind": "sequential|parallel|dependent|complex", "resources": [], "timeout_seconds": 90, "max_retries": 2, "parameters": {}}]}
         messages = [{"role": "system", "content": ("You are NEXO's request analyst and planner. First understand the user's objective; do not choose a tool merely because a keyword appears. Decompose the request into the smallest meaningful executable tasks, assign a semantic intent to each task, preserve dependencies, and mark shared resources so conflicting work is never run concurrently. Never invent unsupported capabilities. Return ONLY valid JSON matching this shape: " + json.dumps(schema, ensure_ascii=False) + f". Maximum {max_tasks} tasks.")}, {"role": "user", "content": goal}]
         if context:
-            messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:6000]})
+            messages.append({"role": "system", "content": "Relevant NEXO state:\n" + json.dumps(context[-8:], ensure_ascii=False)[:3000]})
         result = self._route_call(goal, messages, None, intent=intent)
         parsed = _extract_json(_clean_response_text(_message(result).get("content"), _message(result).get("reasoning_content")))
         if isinstance(parsed, dict):
