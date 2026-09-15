@@ -5,7 +5,7 @@ import urllib.request
 URL = "http://127.0.0.1:8080/health"
 
 
-def check_llama() -> dict[str, object]:
+def check_qwen() -> dict[str, object]:
     try:
         with urllib.request.urlopen(URL, timeout=5) as response:
             return {"ok": True, "status": response.status}
@@ -14,4 +14,4 @@ def check_llama() -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    print(check_llama())
+    print(check_qwen())

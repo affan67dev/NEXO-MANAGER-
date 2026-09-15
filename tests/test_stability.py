@@ -62,8 +62,8 @@ class StabilityTests(unittest.TestCase):
         from agents.executive_planner import ExecutivePlanner
 
         seen = []
-        with patch("agents.executive_planner.LLMRouter.call", side_effect=lambda goal, messages, tools, ask_fn: seen.append(messages) or {"choices": [{"message": {"content": "ok"}}]}):
-            answer = ExecutivePlanner("http://llama").run(
+        with patch("agents.executive_planner.LLMRouter.call", side_effect=lambda goal, messages, tools, ask_fn: seen.append(messages) or {"choices": [{"message": {"content": "ok"}}]}), patch("services.context_budget.count_input_tokens", return_value=20):
+            answer = ExecutivePlanner("http://qwen").run(
                 "hello", [{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}], [], lambda *a, **k: {}, owner=False
             )
         self.assertEqual(answer, "ok")

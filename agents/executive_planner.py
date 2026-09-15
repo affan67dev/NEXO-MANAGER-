@@ -28,12 +28,7 @@ def _thinking_disabled() -> bool:
 
 
 def ask(url: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int = DEFAULT_MAX_TOKENS) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "messages": messages,
-        "temperature": 0.15,
-        "max_tokens": max(1, min(int(max_tokens), output_tokens())),
-        "stream": False,
-    }
+    payload: dict[str, Any] = {"messages": messages, "temperature": 0.15, "max_tokens": max(1, min(int(max_tokens), output_tokens())), "stream": False}
     if _thinking_disabled():
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     if tools:
@@ -99,6 +94,8 @@ class ExecutivePlanner:
 
     def _route_call(self, goal: str, messages: list[dict[str, Any]], tools, *, intent: str | None):
         fitted = fit_messages(self.qwen_url, messages, tools)
+        if intent is None:
+            return self.router.call(goal, fitted, tools, ask)
         return self.router.call(goal, fitted, tools, ask, intent=intent)
 
     def plan_tasks(self, goal: str, *, context: list[dict[str, Any]] | None = None, max_tasks: int = 20, intent: str | None = None) -> list[dict[str, Any]]:
