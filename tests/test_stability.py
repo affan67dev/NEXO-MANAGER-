@@ -62,13 +62,26 @@ class StabilityTests(unittest.TestCase):
         from agents.executive_planner import ExecutivePlanner
 
         seen = []
-        with patch("agents.executive_planner.LLMRouter.call", side_effect=lambda goal, messages, tools, ask_fn: seen.append(messages) or {"choices": [{"message": {"content": "ok"}}]}), patch("services.context_budget.count_input_tokens", return_value=20):
-            answer = ExecutivePlanner("http://qwen").run(
+        with patch("agents.executive_planner.LLMRouter.call", side_effect=lambda goal, messages, tools, ask_fn=None, **kwargs: seen.append(messages) or {"choices": [{"message": {"content": "ok"}}]}), patch("services.context_budget.count_input_tokens", return_value=20):
+            answer = ExecutivePlanner(FakeProvider()).run(
                 "hello", [{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}], [], lambda *a, **k: {}, owner=False
             )
         self.assertEqual(answer, "ok")
         self.assertEqual([m["role"] for m in seen[0]], ["system", "user"])
         self.assertEqual(seen[0][-1]["content"], "hello")
+
+
+class FakeProvider:
+    name = "openrouter"
+    model = "test/model"
+
+    def __init__(self):
+        class Config:
+            output_tokens = 512
+        self.config = Config()
+
+    def complete(self, messages, tools=None, max_tokens=256):
+        return {"choices": [{"message": {"content": "ok"}}]}
 
 
 if __name__ == "__main__":
