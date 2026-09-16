@@ -15,6 +15,7 @@ from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
 from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
+from core.request_context import RequestContext
 from core.router import create_task
 from core.semantic_memory import memory
 from services.document_parser import extract_text
@@ -70,8 +71,6 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
     selected.reverse()
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend({"role": role, "content": content} for role, content in selected)
-    # Never silently truncate the current user message. The Qwen context fitter
-    # either preserves it in full or returns a precise context-budget failure.
     messages.append({"role": "user", "content": goal})
     return messages
 
@@ -149,6 +148,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
+        request_context = RequestContext.telegram(user.id, is_owner(user.id))
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
@@ -187,7 +187,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
         messages = build_llm_messages(text, turns, memory_text)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
-        answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=is_owner(user.id), user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
+        answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=request_context.actor_type == "owner", user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
         if not answer:
             raise RuntimeError("empty_model_response")
