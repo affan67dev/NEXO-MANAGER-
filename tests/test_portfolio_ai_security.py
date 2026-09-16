@@ -54,9 +54,11 @@ class PortfolioStoreTests(unittest.TestCase):
         self.assertEqual(result[0]["visibility"], "public")
         self.assertEqual(result[0]["repository"], "public/repo")
 
-    def test_non_portfolio_scope_returns_nothing(self):
+    def test_normal_telegram_scope_returns_public_knowledge_only(self):
         upsert_knowledge(source="github", repository="public/repo", file_path="README.md", project="OMNIX", content="OMNIX is public.", visibility="public", version_sha="abc", db_path=self.db)
-        self.assertEqual(retrieve_knowledge("OMNIX", channel="telegram", scope="owner_admin", db_path=self.db), [])
+        upsert_knowledge(source="internal", repository="private/repo", file_path="secret.md", project="OMNIX", content="private internal detail", visibility="private", version_sha="def", db_path=self.db)
+        result = retrieve_knowledge("OMNIX", channel="telegram", scope="telegram_public", db_path=self.db)
+        self.assertEqual([item["visibility"] for item in result], ["public"])
 
     def test_allowlisted_sync_rejects_unapproved_source(self):
         sync = KnowledgeSync([ApprovedSource("github", "public/repo", "README.md", "OMNIX")])
@@ -64,8 +66,8 @@ class PortfolioStoreTests(unittest.TestCase):
             sync.sync("public/repo", "other.md", "not approved", "abc")
 
 
-class PortfolioAIQwenTests(unittest.TestCase):
-    def test_qwen_result_is_returned_without_fake_fallback(self):
+class PortfolioAIHostedTests(unittest.TestCase):
+    def test_hosted_result_is_returned_without_fake_fallback(self):
         class FakePlanner:
             def run(self, *args, **kwargs):
                 return "OMNIX is a public portfolio project."
@@ -78,17 +80,17 @@ class PortfolioAIQwenTests(unittest.TestCase):
         self.assertEqual(result["scope"], "public_portfolio")
         self.assertIn("OMNIX", result["answer"])
 
-    def test_qwen_failure_returns_safe_unknown(self):
+    def test_hosted_failure_returns_safe_unknown(self):
         class FailingPlanner:
             def run(self, *args, **kwargs):
-                raise RuntimeError("model_down")
+                raise RuntimeError("provider_down")
 
         context = RequestContext.portfolio("test-session")
         service = PortfolioAI(FailingPlanner())
         with patch("services.portfolio_ai.retrieve_knowledge", return_value=[]), patch("services.portfolio_ai.recent_visitor_turns", return_value=[]):
             result = service.answer("Tell me about Affan's portfolio", context)
         self.assertEqual(result["answer"], SAFE_UNKNOWN)
-        self.assertNotIn("model_down", result["answer"])
+        self.assertNotIn("provider_down", result["answer"])
 
 
 class RequestContextTests(unittest.TestCase):

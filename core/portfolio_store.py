@@ -80,7 +80,6 @@ def upsert_knowledge(*, source: str, repository: str, file_path: str, project: s
     if visibility not in {"public", "private", "internal"}:
         raise ValueError("invalid_visibility")
     ensure_schema(db_path)
-    digest = hashlib.sha256(f"{repository}\0{file_path}\0{version_sha}\0{value}".encode()).hexdigest()
     with connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO knowledge_documents(source,repository,file_path,project,content,visibility,version_sha,created_at,updated_at,indexed_at) VALUES(?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN ? ELSE NULL END) ON CONFLICT(repository,file_path,version_sha) DO UPDATE SET source=excluded.source,project=excluded.project,content=excluded.content,visibility=excluded.visibility,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at",
@@ -90,19 +89,31 @@ def upsert_knowledge(*, source: str, repository: str, file_path: str, project: s
 
 
 def retrieve_knowledge(query: str, *, channel: str, scope: str, project: str | None = None, limit: int = 5, db_path: Path | str = DB) -> list[dict[str, Any]]:
-    if channel != "portfolio_web" or scope != "public_portfolio":
+    visibility_by_scope = {
+        "public_portfolio": {"public"},
+        "telegram_public": {"public"},
+        "owner_admin": {"public", "private", "internal"},
+    }
+    if channel not in {"portfolio_web", "telegram"} or scope not in visibility_by_scope:
+        return []
+    if channel == "portfolio_web" and scope != "public_portfolio":
+        return []
+    if channel == "telegram" and scope == "public_portfolio":
         return []
     terms = [t for t in re.findall(r"[\w-]+", (query or "").lower()) if len(t) > 2][:8]
     if not terms:
         return []
     ensure_schema(db_path)
-    where = ["visibility='public'"]
-    params: list[Any] = []
+    visibility = visibility_by_scope[scope]
+    placeholders = ",".join("?" for _ in visibility)
+    where = [f"visibility IN ({placeholders})", "indexed_at IS NOT NULL"]
+    params: list[Any] = list(sorted(visibility))
     if project:
         where.append("project=?")
         params.append(project)
-    relevance = " + ".join(["CASE WHEN lower(content) LIKE ? THEN 1 ELSE 0 END" for _ in terms])
-    params.extend(f"%{term}%" for term in terms)
+    relevance = " + ".join(["CASE WHEN lower(content) LIKE ? OR lower(project) LIKE ? OR lower(file_path) LIKE ? THEN 1 ELSE 0 END" for _ in terms])
+    for term in terms:
+        params.extend((f"%{term}%", f"%{term}%", f"%{term}%"))
     params.append(max(1, min(int(limit), 10)))
     with connect(db_path) as conn:
         rows = conn.execute(

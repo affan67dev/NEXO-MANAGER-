@@ -11,7 +11,7 @@ from tool_registry import execute as execute_registered_tool, schemas
 import nexo_tools  # noqa: F401
 
 BASE_DIR=Path.home()/"NEXO"; VOICE_DIR=BASE_DIR/"voice"; VOICE_DIR.mkdir(parents=True,exist_ok=True)
-RECORD_SECONDS=int(os.getenv("NEXO_VOICE_RECORD_SECONDS","6")); QWEN_URL=os.getenv("NEXO_QWEN_URL","http://127.0.0.1:8080/v1/chat/completions").strip()
+RECORD_SECONDS=int(os.getenv("NEXO_VOICE_RECORD_SECONDS","6"))
 WAKE_WORDS=("hey nexo","hi nexo","hey nexos","हे नेक्सो","हाय नेक्सो")
 SENSITIVE_TERMS=("delete","wipe","factory reset","shutdown","format","password","credential","payment","send message","send whatsapp")
 
@@ -90,7 +90,7 @@ def _execute_voice_tool(name:str,args:dict[str,Any],*,owner:bool=True,user_id:in
     result=execute_registered_tool(name,args,owner=owner,user_id=user_id); result.setdefault("verified",False); return result
 
 def _fallback_plan(text:str)->list[dict[str,Any]]:
-    """Conservative fallback when Qwen cannot return a plan; it never invents tools."""
+    """Conservative fallback when hosted AI cannot return a plan; it never invents tools."""
     parts=[p.strip(" ,.;") for p in re.split(r"\s+(?:and then|then|after that|and)\s+|\s*;\s*",text,flags=re.I) if p.strip()]
     if not parts: parts=[text.strip()]
     result=[]; previous=None
@@ -101,7 +101,7 @@ def _fallback_plan(text:str)->list[dict[str,Any]]:
 
 def execute_via_nexo(text:str,*,owner:bool=True,user_id:int|str|None=None,confirmation:bool=False,planner:ExecutivePlanner|None=None)->dict[str,Any]:
     manager_task=create_task(text)
-    planner=planner or ExecutivePlanner(QWEN_URL)
+    planner=planner or ExecutivePlanner()
     request_id=f"req-{uuid.uuid4().hex[:12]}"
     try: plan=planner.plan_tasks(text,context=[{"intent":manager_task.intent,"agent":manager_task.agent}])
     except Exception: plan=[]
@@ -121,7 +121,7 @@ def execute_via_nexo(text:str,*,owner:bool=True,user_id:int|str|None=None,confir
         try:
             answer=planner.run(task.objective,messages,schemas(),executor,owner=owner,user_id=user_id,max_steps=6)
         except Exception as exc:
-            return {"ok":False,"verified":False,"permanent":False,"error":f"qwen_execution_failed:{type(exc).__name__}","response":"I couldn't execute that task because the reasoning service failed."}
+            return {"ok":False,"verified":False,"permanent":False,"error":f"hosted_execution_failed:{type(exc).__name__}","response":"I couldn't execute that task because the reasoning service failed."}
         requires=any(x["result"].get("requires_confirmation") for x in local)
         verified=bool(local) and all(x["result"].get("verified") is True for x in local) and not requires
         return {"ok":verified,"verified":verified,"requires_confirmation":requires,"response":answer,"tools":local}
@@ -159,7 +159,7 @@ class NexoVoiceAssistant:
             if not command:self.tts("Yes, how can I help you?"); continue
             self.process_text(command,owner=owner,user_id=user_id)
 
-def self_test()->dict[str,Any]:return {"termux_microphone_stt":_exists("termux-speech-to-text"),"termux_record":_exists("termux-microphone-record"),"tts":_exists("termux-tts-speak") or _exists("say") or _exists("powershell"),"faster_whisper_installed":importlib.util.find_spec("faster_whisper") is not None,"whisper_cli_installed":any(_exists(x) for x in ("whisper-cli","whisper-cpp","whisper")),"wake_model_configured":bool(os.getenv("NEXO_WAKE_MODEL")),"qwen_url":QWEN_URL,"registered_tools":len(schemas())}
+def self_test()->dict[str,Any]:return {"termux_microphone_stt":_exists("termux-speech-to-text"),"termux_record":_exists("termux-microphone-record"),"tts":_exists("termux-tts-speak") or _exists("say") or _exists("powershell"),"faster_whisper_installed":importlib.util.find_spec("faster_whisper") is not None,"whisper_cli_installed":any(_exists(x) for x in ("whisper-cli","whisper-cpp","whisper")),"wake_model_configured":bool(os.getenv("NEXO_WAKE_MODEL")),"llm":"configured via LLM_PROVIDER","registered_tools":len(schemas())}
 def listen(seconds:int=RECORD_SECONDS)->dict[str,Any]:return NexoVoiceAssistant().listen_once(seconds).as_dict()
 def voice_session()->dict[str,Any]:return NexoVoiceAssistant().listen_once().as_dict()
 if __name__=="__main__":print(json.dumps(self_test(),indent=2,ensure_ascii=False))

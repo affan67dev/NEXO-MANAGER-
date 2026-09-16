@@ -8,33 +8,42 @@ from services.context_budget import fit_messages
 from services.llm_router import LLMRouter
 
 
+class FakeProvider:
+    name = "openrouter"
+    model = "test/model"
+    output_tokens = 512
+
+    def __init__(self, result=None, error=None):
+        self.result = result or {"choices": [{"message": {"role": "assistant", "content": "answer"}}]}
+        self.error = error
+        self.calls = []
+        class Config:
+            output_tokens = 512
+        self.config = Config()
+
+    def complete(self, messages, tools=None, max_tokens=256):
+        self.calls.append((messages, tools, max_tokens))
+        if self.error:
+            raise self.error
+        return self.result
+
+
 class LLMRoutingTests(unittest.TestCase):
-    @staticmethod
-    def response(url):
-        return {"choices": [{"message": {"role": "assistant", "content": f"answer from {url}"}}]}
+    def test_router_uses_single_provider_and_no_secondary(self):
+        provider = FakeProvider({"choices": [{"message": {"content": "hosted answer"}}]})
+        router = LLMRouter(provider)
+        result = router.call("What is coding?", [{"role": "user", "content": "What is coding?"}], None, intent="conversation")
+        self.assertEqual(result["choices"][0]["message"]["content"], "hosted answer")
+        self.assertEqual(provider.calls[0][2], 512)
+        self.assertEqual(router.choose_model("hi", [], intent="conversation"), "test/model")
+        self.assertFalse(router.should_use_secondary("hi", []))
 
-    def test_every_request_routes_to_qwen(self):
-        with patch.dict(os.environ, {"NEXO_LLM_RETRIES": "0", "NEXO_QWEN_FALLBACK_ENABLED": "true", "NEXO_QWEN_URL": "http://old-secondary"}, clear=False):
-            router = LLMRouter("http://qwen")
-            calls = []
-            result = router.call("What is coding?", [{"role": "user", "content": "What is coding?"}], None, lambda url, *_: calls.append(url) or self.response(url))
-            self.assertEqual(calls, ["http://qwen"])
-            self.assertEqual(result["choices"][0]["message"]["content"], "answer from http://qwen")
-            self.assertEqual(router.choose_model("hi", [], intent="conversation"), "qwen")
-
-    def test_qwen_failure_does_not_fail_over_to_old_model(self):
-        with patch.dict(os.environ, {"NEXO_LLM_RETRIES": "0"}, clear=False):
-            router = LLMRouter("http://qwen")
-            calls = []
-            with self.assertRaisesRegex(RuntimeError, "qwen_request_failed"):
-                router.call("hello", [{"role": "user", "content": "hello"}], None, lambda url, *_: calls.append(url) or (_ for _ in ()).throw(RuntimeError("down")))
-            self.assertEqual(calls, ["http://qwen"])
-
-    def test_invalid_response_is_rejected(self):
-        with patch.dict(os.environ, {"NEXO_LLM_RETRIES": "0"}, clear=False):
-            router = LLMRouter("http://qwen")
-            with self.assertRaisesRegex(RuntimeError, "qwen_request_failed"):
-                router.call("hello", [{"role": "user", "content": "hello"}], None, lambda *_: {})
+    def test_provider_failure_has_no_local_fallback(self):
+        provider = FakeProvider(error=RuntimeError("llm_provider_unavailable"))
+        router = LLMRouter(provider)
+        with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
+            router.call("hello", [{"role": "user", "content": "hello"}])
+        self.assertEqual(len(provider.calls), 1)
 
     def test_think_block_is_not_user_facing(self):
         self.assertEqual(_clean_response_text("<think>private reasoning</think>Final answer."), "Final answer.")
@@ -46,55 +55,35 @@ class LLMRoutingTests(unittest.TestCase):
         self.assertEqual(task.intent, "security")
 
     def test_empty_planner_answer_is_rejected(self):
-        planner = ExecutivePlanner("http://qwen")
-        with patch.object(planner.router, "call", return_value={"choices": [{"message": {"content": ""}}]}), patch("services.context_budget.count_input_tokens", return_value=20):
-            with self.assertRaisesRegex(RuntimeError, "empty_model_response"):
-                planner.run("Explain this", [{"role": "system", "content": "NEXO"}, {"role": "user", "content": "Explain this"}], [], lambda *a, **k: {}, owner=True)
+        provider = FakeProvider({"choices": [{"message": {"content": ""}}]})
+        planner = ExecutivePlanner(provider)
+        with self.assertRaisesRegex(RuntimeError, "empty_model_response"):
+            planner.run("Explain this", [{"role": "system", "content": "NEXO"}, {"role": "user", "content": "Explain this"}], [], lambda *a, **k: {}, owner=True)
 
-    def test_short_and_moderate_requests_fit_without_losing_user_text(self):
+    def test_context_budget_is_local_and_bounded(self):
         messages = [
             {"role": "system", "content": "security policy"},
-            {"role": "assistant", "content": "previous answer"},
-            {"role": "user", "content": "Please explain how local inference works in simple terms."},
-        ]
-        with patch("services.context_budget.count_input_tokens", side_effect=lambda *_args, **_kwargs: 80):
-            fitted = fit_messages("http://qwen/v1/chat/completions", messages)
-        self.assertEqual(fitted[-1]["content"], messages[-1]["content"])
-
-    def test_2247_token_class_is_bounded_before_qwen(self):
-        large_history = "H" * 1800
-        messages = [
-            {"role": "system", "content": "security policy"},
-            {"role": "assistant", "content": large_history},
+            {"role": "assistant", "content": "H" * 1800},
             {"role": "user", "content": "What is the root cause of this failure?"},
         ]
-
-        def exact_counter(_url, candidate, _tools=None):
-            if any(item.get("content") == large_history for item in candidate):
-                return 2247
-            return 40
-
-        with patch("services.context_budget.count_input_tokens", side_effect=exact_counter):
-            fitted = fit_messages("http://qwen/v1/chat/completions", messages)
-        self.assertLessEqual(40, 1024 - 256)
-        self.assertNotIn(large_history, [item.get("content") for item in fitted])
+        with patch.dict(os.environ, {"LLM_CONTEXT_TOKENS": "1024", "LLM_OUTPUT_TOKENS": "256"}, clear=False):
+            fitted = fit_messages(messages)
         self.assertEqual(fitted[-1]["content"], messages[-1]["content"])
+        self.assertNotIn("H" * 1800, [item.get("content") for item in fitted])
 
     def test_oversized_user_message_is_rejected_without_truncation(self):
         user_text = "U" * 5000
         messages = [{"role": "system", "content": "security policy"}, {"role": "user", "content": user_text}]
-        with patch("services.context_budget.count_input_tokens", return_value=900):
+        with patch.dict(os.environ, {"LLM_CONTEXT_TOKENS": "512", "LLM_OUTPUT_TOKENS": "128"}, clear=False):
             with self.assertRaisesRegex(RuntimeError, "context_budget_exceeded_user_message_too_large"):
-                fit_messages("http://qwen/v1/chat/completions", messages)
+                fit_messages(messages)
         self.assertEqual(messages[-1]["content"], user_text)
 
-    def test_malformed_model_response_and_backend_failure_are_distinct(self):
-        with patch.dict(os.environ, {"NEXO_LLM_RETRIES": "0"}, clear=False):
-            router = LLMRouter("http://qwen")
-            with self.assertRaisesRegex(RuntimeError, "qwen_request_failed"):
-                router.call("hello", [{"role": "user", "content": "hello"}], None, lambda *_: {"choices": []})
-            with self.assertRaisesRegex(RuntimeError, "qwen_request_failed"):
-                router.call("hello", [{"role": "user", "content": "hello"}], None, lambda *_: (_ for _ in ()).throw(TimeoutError("timeout")))
+    def test_portfolio_and_telegram_can_share_same_planner_type(self):
+        provider = FakeProvider()
+        planner = ExecutivePlanner(provider)
+        self.assertEqual(planner.router.provider.name, "openrouter")
+        self.assertEqual(planner.router.choose_model("portfolio", [], intent="conversation"), "test/model")
 
 
 if __name__ == "__main__":
