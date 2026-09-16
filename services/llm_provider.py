@@ -93,7 +93,7 @@ def validate_provider_response(data: Any) -> bool:
     message = choices[0].get("message")
     if not isinstance(message, dict):
         return False
-    return bool(message.get("tool_calls")) or bool(str(message.get("content") or "").strip()) or bool(str(message.get("reasoning_content") or "").strip())
+    return bool(message.get("tool_calls")) or bool(str(message.get("content") or "").strip())
 
 
 class OpenRouterProvider:

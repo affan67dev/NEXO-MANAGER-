@@ -38,7 +38,7 @@ LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
 logger = logging.getLogger("nexo.telegram")
-planner = ExecutivePlanner()
+planner: ExecutivePlanner | None = None
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_MEMORY_CHARS = 600
 MAX_KNOWLEDGE_CHARS = 6000
@@ -153,6 +153,7 @@ async def handle_attachment(update: Update, user_id: int) -> str | None:
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global planner
     if not update.message:
         return
     user = update.effective_user
@@ -206,6 +207,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         knowledge_text = _knowledge_text(knowledge)
         messages = build_llm_messages(text, turns, memory_text, knowledge_text)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
+        planner = planner or ExecutivePlanner()
         answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=request_context.actor_type == "owner", user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
         if not answer:

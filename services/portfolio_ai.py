@@ -17,7 +17,7 @@ MAX_HISTORY_CHARS = 3600
 
 class PortfolioAI:
     def __init__(self, planner: ExecutivePlanner | None = None) -> None:
-        self.planner = planner or ExecutivePlanner()
+        self.planner = planner
 
     def _knowledge_prompt(self, docs: list[dict[str, Any]]) -> str:
         if not docs:
@@ -73,7 +73,8 @@ class PortfolioAI:
             messages.append({"role": "system", "content": "Session conversation:\n" + history})
         messages.append({"role": "user", "content": text.strip()})
         try:
-            answer = self.planner.run(text.strip(), messages, [], lambda *_args, **_kwargs: {"ok": False}, owner=False, user_id=None, max_steps=1, intent="conversation").strip()
+            planner = self.planner or ExecutivePlanner()
+            answer = planner.run(text.strip(), messages, [], lambda *_args, **_kwargs: {"ok": False}, owner=False, user_id=None, max_steps=1, intent="conversation").strip()
         except Exception:
             return response(Action.ANSWER, SAFE_UNKNOWN)
         if not answer:
