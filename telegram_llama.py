@@ -15,6 +15,7 @@ from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
 from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
+from core.portfolio_store import retrieve_knowledge
 from core.request_context import RequestContext
 from core.router import create_task
 from core.semantic_memory import memory
@@ -29,18 +30,18 @@ ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-QWEN_URL = os.getenv("NEXO_QWEN_URL", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
-SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are NEXO, a safe local-first personal AI executive assistant."
+SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are NEXO, a safe personal AI executive assistant."
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
 logger = logging.getLogger("nexo.telegram")
-planner = ExecutivePlanner(QWEN_URL)
+planner: ExecutivePlanner | None = None
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_MEMORY_CHARS = 600
+MAX_KNOWLEDGE_CHARS = 6000
 MAX_TURNS_CHARS = 900
 MAX_TURN_CHARS = 300
 MAX_UPDATE_QUEUE = 20
@@ -56,9 +57,11 @@ def _clip(text: str, limit: int) -> str:
     return (text or "")[:limit]
 
 
-def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str) -> list[dict[str, str]]:
+def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "") -> list[dict[str, str]]:
     system = SYSTEM
-    system += "\n\nRelevant long-term memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
+    system += "\n\nRelevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
+    if knowledge_text:
+        system += "\n\nAuthorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)
     selected: list[tuple[str, str]] = []
     used = 0
     for role, content in reversed(turns):
@@ -73,6 +76,20 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
     messages.extend({"role": role, "content": content} for role, content in selected)
     messages.append({"role": "user", "content": goal})
     return messages
+
+
+def _knowledge_text(docs: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    remaining = MAX_KNOWLEDGE_CHARS
+    for doc in docs[:5]:
+        content = _clip(str(doc.get("content") or ""), min(1800, remaining))
+        if not content:
+            continue
+        parts.append(f"SOURCE={doc.get('source','')} PROJECT={doc.get('project','')} VISIBILITY={doc.get('visibility','')}\n{content}")
+        remaining -= len(content)
+        if remaining <= 0:
+            break
+    return "\n\n--- AUTHORIZED SOURCE ---\n".join(parts)
 
 
 def _safe_failure_message() -> str:
@@ -136,6 +153,7 @@ async def handle_attachment(update: Update, user_id: int) -> str | None:
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global planner
     if not update.message:
         return
     user = update.effective_user
@@ -184,9 +202,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_id = get_or_create_session(user.id)
         turns = recent_turns(session_id, limit=8)
         memories = memory.search(text, limit=4, user_id=user.id)
-        memory_text = "\n".join(x["content"] for x in memories) or "(none; use web_search when external/current information is required)"
-        messages = build_llm_messages(text, turns, memory_text)
+        memory_text = "\n".join(x["content"] for x in memories) or "(none)"
+        knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5)
+        knowledge_text = _knowledge_text(knowledge)
+        messages = build_llm_messages(text, turns, memory_text, knowledge_text)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
+        planner = planner or ExecutivePlanner()
         answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=request_context.actor_type == "owner", user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
         if not answer:
@@ -197,7 +218,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except RuntimeError as exc:
         logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
         if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
-            await update.message.reply_text("That message is too large for NEXO's current local Qwen context. Please send a shorter request.")
+            await update.message.reply_text("That message is too large for NEXO's current context budget. Please send a shorter request.")
         else:
             await update.message.reply_text(_safe_failure_message())
     except Exception:
@@ -212,13 +233,11 @@ def main() -> None:
     global app
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    if not QWEN_URL:
-        raise RuntimeError("NEXO_QWEN_URL is not configured")
     app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
     scheduler.start(daily_briefing, daily_maintenance)
-    logger.info("NEXO unified Telegram runtime starting with single Qwen endpoint=%s", QWEN_URL)
+    logger.info("NEXO unified Telegram runtime starting with hosted LLM provider")
     app.run_polling(drop_pending_updates=True)
 
 

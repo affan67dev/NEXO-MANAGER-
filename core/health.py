@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import urllib.request
-
-URL = "http://127.0.0.1:8080/health"
+from services.llm_provider import LLMConfig
 
 
-def check_qwen() -> dict[str, object]:
+def check_llm_configuration() -> dict[str, object]:
     try:
-        with urllib.request.urlopen(URL, timeout=5) as response:
-            return {"ok": True, "status": response.status}
-    except Exception:
-        return {"ok": False, "status": None}
+        config = LLMConfig.from_env()
+        return {"ok": True, "provider": config.provider, "model": config.model}
+    except RuntimeError as exc:
+        return {"ok": False, "provider": None, "model": None, "category": str(exc)}
 
 
 if __name__ == "__main__":
-    print(check_qwen())
+    print(check_llm_configuration())
