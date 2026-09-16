@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import os
-from typing import Annotated
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Cookie, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Portfolio API is a separate Uvicorn entrypoint from Telegram. Load the same
+# server-side environment file before lazy provider creation can occur.
+ENV_FILE = Path.home() / ".nexo.env"
+if ENV_FILE.exists():
+    load_dotenv(ENV_FILE, override=False)
 
 from core.portfolio_store import ensure_schema, new_session_id
 from core.request_context import RequestContext
@@ -22,7 +29,7 @@ if MAX_ORIGINS:
 
 
 class ChatRequest(BaseModel):
-    message: Annotated[str, Field(min_length=1, max_length=4000)]
+    message: str = Field(min_length=1, max_length=4000)
 
 
 def _origin_allowed(origin: str | None) -> bool:
