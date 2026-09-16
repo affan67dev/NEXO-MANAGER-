@@ -7,9 +7,9 @@ from fastapi import Cookie, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from core.portfolio_ai import portfolio_ai
 from core.portfolio_store import ensure_schema, new_session_id
 from core.request_context import RequestContext
+from services.portfolio_ai import portfolio_ai
 
 APP_NAME = "NEXO Portfolio AI API"
 COOKIE = "nexo_portfolio_session"
@@ -46,7 +46,7 @@ def startup() -> None:
 def create_session(response: Response, origin: str | None = Header(default=None)) -> dict[str, str]:
     if MAX_ORIGINS and not _origin_allowed(origin):
         raise HTTPException(status_code=403, detail="origin_not_allowed")
-    session_id = _session(response, None)
+    _session(response, None)
     return {"scope": "public_portfolio", "channel": "portfolio_web", "session": "created"}
 
 
