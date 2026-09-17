@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import unittest
 from unittest.mock import patch
+from email.utils import format_datetime
 
 import httpx
 
@@ -16,10 +18,11 @@ class LLMProviderTests(unittest.TestCase):
             "LLM_PROVIDER": "openrouter",
             "LLM_API_KEY": "test-secret-key",
             "LLM_MODEL": "test/model",
+            "LLM_FALLBACK_MODELS": "",
             "LLM_BASE_URL": "https://openrouter.ai/api/v1",
             "LLM_TIMEOUT_SECONDS": "1",
             "LLM_RETRIES": "1",
-            "LLM_BACKOFF_SECONDS": "0",
+            "LLM_BACKOFF_SECONDS": "0.5",
             "LLM_CONTEXT_TOKENS": "4096",
             "LLM_OUTPUT_TOKENS": "512",
         }
@@ -37,6 +40,7 @@ class LLMProviderTests(unittest.TestCase):
             config = LLMConfig.from_env()
             self.assertEqual(config.provider, "openrouter")
             self.assertEqual(config.model, "test/model")
+            self.assertEqual(config.fallback_models, ())
         for key in ("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL"):
             env = dict(self.env)
             env.pop(key)
@@ -44,15 +48,133 @@ class LLMProviderTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     LLMConfig.from_env()
 
+    def test_fallback_models_are_optional_and_exclude_primary_duplicates(self):
+        env = dict(self.env, LLM_FALLBACK_MODELS="backup/a, backup/b, test/model, backup/a")
+        with patch.dict(os.environ, env, clear=True):
+            config = LLMConfig.from_env()
+        self.assertEqual(config.fallback_models, ("backup/a", "backup/b"))
+
     def test_success_and_server_side_auth_header(self):
         seen = {}
         def handler(request):
             seen["authorization"] = request.headers.get("authorization")
+            seen["payload"] = request.read().decode()
             return httpx.Response(200, json=self.success_response())
         with patch.dict(os.environ, self.env, clear=True):
             result = self.provider(handler).complete([{"role": "user", "content": "hello"}])
         self.assertEqual(result["choices"][0]["message"]["content"], "hello")
         self.assertEqual(seen["authorization"], "Bearer test-secret-key")
+        self.assertNotIn('"models"', seen["payload"])
+
+    def test_fallback_models_are_sent_only_when_configured(self):
+        seen = []
+        def handler(request):
+            import json
+            seen.append(json.loads(request.read().decode()))
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_FALLBACK_MODELS="backup/a,backup/b")
+        with patch.dict(os.environ, env, clear=True):
+            self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(seen[0]["model"], "test/model")
+        self.assertEqual(seen[0]["models"], ["backup/a", "backup/b"])
+
+    def test_429_numeric_retry_after_is_used(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "7"})
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            result = self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(result["choices"][0]["message"]["content"], "hello")
+        sleep.assert_called_once_with(7.0)
+
+    def test_429_http_date_retry_after_is_used(self):
+        retry_at = datetime.now(timezone.utc) + timedelta(seconds=8)
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": format_datetime(retry_at, usegmt=True)})
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        delay = sleep.call_args.args[0]
+        self.assertGreaterEqual(delay, 0)
+        self.assertLessEqual(delay, 30.0)
+        self.assertGreater(delay, 0)
+
+    def test_429_malformed_retry_after_uses_exponential_backoff(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "not-a-delay"})
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        sleep.assert_called_once_with(0.5)
+
+    def test_429_missing_retry_after_uses_exponential_backoff(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429)
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        sleep.assert_called_once_with(0.5)
+
+    def test_429_retry_after_is_bounded(self):
+        def handler(request):
+            return httpx.Response(429, headers={"Retry-After": "999999999"})
+        env = dict(self.env, LLM_RETRIES="1")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
+                self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        sleep.assert_called_once_with(30.0)
+
+    def test_repeated_429_ends_after_configured_retry_limit(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        env = dict(self.env, LLM_RETRIES="2")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
+                self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(len(calls), 3)
+
+    def test_rate_limit_and_server_error_are_bounded(self):
+        for status in (429, 503):
+            calls = []
+            def handler(request, status=status):
+                calls.append(1)
+                return httpx.Response(status)
+            env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0")
+            with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep"):
+                with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
+                    self.provider(handler).complete([{"role": "user", "content": "hello"}])
+            self.assertEqual(len(calls), 2)
+
+    def test_transient_503_is_successful_after_bounded_retry(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(503)
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep"):
+            result = self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(result["choices"][0]["message"]["content"], "hello")
+        self.assertEqual(len(calls), 2)
 
     def test_timeout_is_controlled(self):
         def handler(request):
@@ -69,18 +191,6 @@ class LLMProviderTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaisesRegex(RuntimeError, "llm_provider_network_failure"):
                 self.provider(handler).complete([{"role": "user", "content": "hello"}])
-
-    def test_rate_limit_and_server_error_are_bounded(self):
-        for status in (429, 503):
-            calls = []
-            def handler(request, status=status):
-                calls.append(1)
-                return httpx.Response(status)
-            env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0")
-            with patch.dict(os.environ, env, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
-                    self.provider(handler).complete([{"role": "user", "content": "hello"}])
-            self.assertEqual(len(calls), 2)
 
     def test_unavailable_model_and_auth_failures_are_controlled(self):
         for status, error in ((404, "llm_model_unavailable"), (401, "llm_provider_authorization_failed"), (403, "llm_provider_authorization_failed")):
