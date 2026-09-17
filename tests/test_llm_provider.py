@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import unittest
@@ -48,7 +49,7 @@ class LLMProviderTests(unittest.TestCase):
         env = dict(self.env, LLM_FALLBACK_MODELS="test/backup,test/backup-2")
         seen = {}
         def handler(request):
-            seen["payload"] = request.json()
+            seen["payload"] = json.loads(request.content)
             return httpx.Response(200, json=self.success_response())
         with patch.dict(os.environ, env, clear=True):
             self.provider(handler).complete([{"role": "user", "content": "hello"}])
