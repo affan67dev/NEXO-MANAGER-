@@ -9,7 +9,6 @@ from typing import Iterator
 
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "data" / "memory.db"
-DB.parent.mkdir(parents=True, exist_ok=True)
 
 SECRET_PATTERNS = [
     r"\bapi[_ -]?key\s*[:=]\s*\S+",
@@ -47,15 +46,18 @@ def _connect() -> Iterator[sqlite3.Connection]:
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,last_activity TEXT NOT NULL,created_at TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS conversation_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-    conn.execute("CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,source TEXT NOT NULL DEFAULT 'conversation',updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    conn.execute("CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,source TEXT NOT NULL DEFAULT 'conversation',updated_at TEXT DEFAULT CURRENT_TIMESTAMP,status TEXT NOT NULL DEFAULT 'approved')")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
     if "user_id" not in columns:
         conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    if "status" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'")
+    conn.execute("CREATE TABLE IF NOT EXISTS memory_candidates(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,category TEXT NOT NULL,content TEXT NOT NULL,importance INTEGER NOT NULL DEFAULT 5,source TEXT NOT NULL DEFAULT 'conversation',status TEXT NOT NULL DEFAULT 'pending',supersedes_id INTEGER,approved_memory_id INTEGER,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_session ON conversation_messages(session_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversation_messages(user_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_session_activity ON sessions(last_activity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_user ON memories(user_id,importance,id)")
-    conn.commit()
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_user ON memories(user_id,status,importance,id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_candidate_status ON memory_candidates(user_id,status,created_at)")
 
 
 def looks_sensitive(text: str) -> bool:
@@ -70,8 +72,62 @@ def save_memory(category, content, importance=5, source="conversation", user_id:
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            conn.execute("INSERT INTO memories(category,content,importance,source,user_id) VALUES(?,?,?,?,?)", (str(category), content, max(1, min(int(importance), 10)), str(source), str(user_id or "")))
+            conn.execute("INSERT INTO memories(category,content,importance,source,user_id,status) VALUES(?,?,?,?,?,?)", (str(category), content, max(1, min(int(importance), 10)), str(source), str(user_id or ""), "approved"))
         return True
+    except sqlite3.Error:
+        return False
+
+
+def create_memory_candidate(*, user_id: int | str, category: str, content: str, importance: int = 5, source: str = "conversation", supersedes_id: int | None = None) -> int | None:
+    value = str(content or "").strip()
+    if not user_id or not value or len(value) > MAX_MEMORY_CHARS or looks_sensitive(value):
+        return None
+    if not category or not 1 <= int(importance) <= 10:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            cur = conn.execute("INSERT INTO memory_candidates(user_id,category,content,importance,source,status,supersedes_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", (str(user_id), str(category), value, int(importance), str(source), "pending", supersedes_id, now, now))
+            return int(cur.lastrowid)
+    except sqlite3.Error:
+        return None
+
+
+def approve_memory_candidate(candidate_id: int) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            row = conn.execute("SELECT user_id,category,content,importance,source,supersedes_id FROM memory_candidates WHERE id=? AND status='pending'", (int(candidate_id),)).fetchone()
+            if not row or looks_sensitive(row[2]):
+                return False
+            if row[5] is not None:
+                conn.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=? AND user_id=?", (now, int(row[5]), str(row[0])))
+            cur = conn.execute("INSERT INTO memories(category,content,importance,source,user_id,status,updated_at) VALUES(?,?,?,?,?,?,?)", (row[1], row[2], row[3], row[4], str(row[0]), "approved", now))
+            memory_id = int(cur.lastrowid)
+            conn.execute("UPDATE memory_candidates SET status='approved',approved_memory_id=?,updated_at=? WHERE id=?", (memory_id, now, int(candidate_id)))
+            return True
+    except sqlite3.Error:
+        return False
+
+
+def reject_memory_candidate(candidate_id: int) -> bool:
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            cur = conn.execute("UPDATE memory_candidates SET status='rejected',updated_at=? WHERE id=? AND status='pending'", (datetime.now(timezone.utc).isoformat(), int(candidate_id)))
+            return cur.rowcount == 1
+    except sqlite3.Error:
+        return False
+
+
+def supersede_memory(memory_id: int) -> bool:
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            cur = conn.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=? AND status='approved'", (datetime.now(timezone.utc).isoformat(), int(memory_id)))
+            return cur.rowcount == 1
     except sqlite3.Error:
         return False
 
@@ -84,7 +140,7 @@ def search_memory(keyword, limit=5, user_id: int | str | None = None):
         with _connect() as conn:
             _ensure_schema(conn)
             uid = str(user_id or "")
-            return conn.execute("SELECT category,content,importance FROM memories WHERE user_id=? AND content LIKE ? ORDER BY importance DESC,updated_at DESC LIMIT ?", (uid, f"%{keyword}%", max(1, min(int(limit), 10)))).fetchall()
+            return conn.execute("SELECT category,content,importance FROM memories WHERE user_id=? AND status='approved' AND content LIKE ? ORDER BY importance DESC,updated_at DESC LIMIT ?", (uid, f"%{keyword}%", max(1, min(int(limit), 10)))).fetchall()
     except sqlite3.Error:
         return []
 

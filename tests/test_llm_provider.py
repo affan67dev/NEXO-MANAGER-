@@ -44,6 +44,16 @@ class LLMProviderTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     LLMConfig.from_env()
 
+    def test_optional_openrouter_model_fallback_is_explicit(self):
+        env = dict(self.env, LLM_FALLBACK_MODELS="test/backup,test/backup-2")
+        seen = {}
+        def handler(request):
+            seen["payload"] = request.json()
+            return httpx.Response(200, json=self.success_response())
+        with patch.dict(os.environ, env, clear=True):
+            self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(seen["payload"]["models"], ["test/model", "test/backup", "test/backup-2"])
+
     def test_success_and_server_side_auth_header(self):
         seen = {}
         def handler(request):
@@ -70,6 +80,34 @@ class LLMProviderTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "llm_provider_network_failure"):
                 self.provider(handler).complete([{"role": "user", "content": "hello"}])
 
+    def test_429_retry_after_is_honored(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "2"})
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            result = self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(result["choices"][0]["message"]["content"], "hello")
+        sleep.assert_called_once_with(2.0)
+        self.assertEqual(len(calls), 2)
+
+    def test_429_without_retry_after_uses_existing_backoff(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(429)
+            return httpx.Response(200, json=self.success_response())
+        env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0.5")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            result = self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(result["choices"][0]["message"]["content"], "hello")
+        sleep.assert_called_once_with(0.5)
+        self.assertEqual(len(calls), 2)
+
     def test_rate_limit_and_server_error_are_bounded(self):
         for status in (429, 503):
             calls = []
@@ -77,10 +115,22 @@ class LLMProviderTests(unittest.TestCase):
                 calls.append(1)
                 return httpx.Response(status)
             env = dict(self.env, LLM_RETRIES="1", LLM_BACKOFF_SECONDS="0")
-            with patch.dict(os.environ, env, clear=True):
+            with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep"):
                 with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
                     self.provider(handler).complete([{"role": "user", "content": "hello"}])
             self.assertEqual(len(calls), 2)
+
+    def test_exhausted_429_does_not_retry_beyond_bound(self):
+        calls = []
+        def handler(request):
+            calls.append(1)
+            return httpx.Response(429, headers={"Retry-After": "1"})
+        env = dict(self.env, LLM_RETRIES="1")
+        with patch.dict(os.environ, env, clear=True), patch("services.llm_provider.time.sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "llm_provider_unavailable"):
+                self.provider(handler).complete([{"role": "user", "content": "hello"}])
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once_with(1.0)
 
     def test_unavailable_model_and_auth_failures_are_controlled(self):
         for status, error in ((404, "llm_model_unavailable"), (401, "llm_provider_authorization_failed"), (403, "llm_provider_authorization_failed")):
