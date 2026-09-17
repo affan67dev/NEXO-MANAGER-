@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
 import logging
 import os
@@ -10,6 +12,8 @@ from typing import Any, Protocol
 import httpx
 
 logger = logging.getLogger("nexo.llm_provider")
+
+_MAX_RETRY_DELAY_SECONDS = 30.0
 
 
 class LLMProvider(Protocol):
@@ -35,6 +39,7 @@ class LLMConfig:
     backoff_seconds: float
     context_tokens: int
     output_tokens: int
+    fallback_models: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -62,6 +67,7 @@ class LLMConfig:
             backoff_seconds=_float_env("LLM_BACKOFF_SECONDS", 0.5, 0.0, 10.0),
             context_tokens=_int_env("LLM_CONTEXT_TOKENS", 4096, 512, 32768),
             output_tokens=_int_env("LLM_OUTPUT_TOKENS", 512, 128, 4096),
+            fallback_models=_fallback_models_from_env(model),
         )
 
 
@@ -79,9 +85,42 @@ def _float_env(name: str, default: float, minimum: float, maximum: float) -> flo
         return default
 
 
+def _fallback_models_from_env(primary_model: str) -> tuple[str, ...]:
+    raw = os.getenv("LLM_FALLBACK_MODELS", "")
+    models: list[str] = []
+    seen = {primary_model}
+    for value in raw.split(","):
+        model = value.strip()
+        if model and model not in seen:
+            models.append(model)
+            seen.add(model)
+    return tuple(models)
+
+
 def _endpoint(base_url: str) -> str:
     value = base_url.rstrip("/")
     return value if value.endswith("/chat/completions") else value + "/chat/completions"
+
+
+def _retry_delay(response: httpx.Response, backoff_seconds: float, attempt: int) -> float:
+    """Return a bounded Retry-After delay, falling back to exponential backoff."""
+    header = response.headers.get("Retry-After")
+    if header:
+        value = header.strip()
+        try:
+            delay = float(value)
+            if delay >= 0:
+                return min(delay, _MAX_RETRY_DELAY_SECONDS)
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+                return min(delay, _MAX_RETRY_DELAY_SECONDS)
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return min(backoff_seconds * (2 ** attempt), _MAX_RETRY_DELAY_SECONDS)
 
 
 def validate_provider_response(data: Any) -> bool:
@@ -115,6 +154,8 @@ class OpenRouterProvider:
             "max_tokens": max(1, min(int(max_tokens), self.config.output_tokens)),
             "stream": False,
         }
+        if self.config.fallback_models:
+            payload["models"] = list(self.config.fallback_models)
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -134,7 +175,8 @@ class OpenRouterProvider:
                         category = f"http_{response.status_code}"
                         logger.warning("llm_provider_failure provider=%s model=%s category=%s attempt=%d latency_ms=%d", self.name, self.model, category, attempt + 1, elapsed_ms)
                         if attempt < self.config.retries:
-                            time.sleep(self.config.backoff_seconds * (2 ** attempt))
+                            delay = _retry_delay(response, self.config.backoff_seconds, attempt) if response.status_code == 429 else min(self.config.backoff_seconds * (2 ** attempt), _MAX_RETRY_DELAY_SECONDS)
+                            time.sleep(delay)
                             continue
                         raise RuntimeError("llm_provider_unavailable")
                     if response.status_code in {401, 403}:
@@ -157,13 +199,13 @@ class OpenRouterProvider:
                 except httpx.TimeoutException as exc:
                     logger.warning("llm_provider_failure provider=%s model=%s category=timeout attempt=%d", self.name, self.model, attempt + 1)
                     if attempt < self.config.retries:
-                        time.sleep(self.config.backoff_seconds * (2 ** attempt))
+                        time.sleep(min(self.config.backoff_seconds * (2 ** attempt), _MAX_RETRY_DELAY_SECONDS))
                         continue
                     raise RuntimeError("llm_provider_timeout") from exc
                 except httpx.RequestError as exc:
                     logger.warning("llm_provider_failure provider=%s model=%s category=network attempt=%d", self.name, self.model, attempt + 1)
                     if attempt < self.config.retries:
-                        time.sleep(self.config.backoff_seconds * (2 ** attempt))
+                        time.sleep(min(self.config.backoff_seconds * (2 ** attempt), _MAX_RETRY_DELAY_SECONDS))
                         continue
                     raise RuntimeError("llm_provider_network_failure") from exc
             raise RuntimeError("llm_provider_unavailable")
