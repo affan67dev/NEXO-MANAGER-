@@ -9,6 +9,7 @@ from typing import Iterator
 
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "data" / "memory.db"
+DB.parent.mkdir(parents=True, exist_ok=True)
 
 SECRET_PATTERNS = [
     r"\bapi[_ -]?key\s*[:=]\s*\S+",
