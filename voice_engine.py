@@ -3,13 +3,15 @@
 Technical NEXO module names remain compatible by design; ALEX is the user-facing voice identity.
 """
 from __future__ import annotations
-import importlib.util, json, os, platform, re, shutil, subprocess, time, uuid
+import importlib.util, json, logging, os, platform, re, shutil, subprocess, time, uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 from android_capabilities import toast_state
 from services.llm_provider import LLMConfig
+
+logger = logging.getLogger("nexo.alex.voice")
 
 from agents.executive_planner import ExecutivePlanner
 from core.router import create_task
@@ -410,7 +412,8 @@ class NexoVoiceAssistant:
             except KeyboardInterrupt:
                 self._set_state(VoiceState.IDLE)
                 break
-            except Exception:
+            except Exception as exc:
+                logger.exception("voice_runtime_error type=%s", type(exc).__name__)
                 self._set_state(VoiceState.IDLE)
                 time.sleep(1)
 
