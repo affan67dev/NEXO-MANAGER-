@@ -18,7 +18,13 @@ CONFIG = STATE / "runtime.json"
 VENV = STATE / "venv"
 ENV_FILE = Path.home() / ".nexo.env"
 DB = REPO / "data" / "memory.db"
+MVB_MANIFEST = REPO / "requirements-nexo-mvb.txt"
+FULL_MANIFEST = REPO / "requirements-nexo.txt"
 PM2_NAMES = ("nexo-backend", "nexo-llama")
+TERMUX_COMMANDS = (
+    "termux-speech-to-text", "termux-microphone-record", "termux-tts-speak",
+    "termux-toast", "termux-screenshot", "termux-battery-status",
+)
 
 
 def is_termux() -> bool:
@@ -26,16 +32,11 @@ def is_termux() -> bool:
     return bool(prefix) and Path(prefix).is_dir()
 
 
-def run(cmd: list[str], check: bool = False, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+def run(cmd: list[str], check: bool = False, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, timeout=timeout)
 
 
 def _detect_ram_bytes() -> int | None:
-    try:
-        import psutil
-        return int(psutil.virtual_memory().total)
-    except Exception:
-        pass
     try:
         if Path("/proc/meminfo").is_file():
             for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
@@ -43,39 +44,19 @@ def _detect_ram_bytes() -> int | None:
                     return int(line.split()[1]) * 1024
     except (OSError, ValueError):
         pass
-    if platform.system() == "Darwin" and shutil.which("sysctl"):
-        try:
-            result = subprocess.run(["sysctl", "-n", "hw.memsize"], text=True, capture_output=True, timeout=5)
-            return int(result.stdout.strip())
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-    return None
+    try:
+        import psutil
+        return int(psutil.virtual_memory().total)
+    except Exception:
+        return None
 
 
 def hardware() -> dict[str, object]:
-    info: dict[str, object] = {
+    return {
         "os": platform.system(), "release": platform.release(), "machine": platform.machine(),
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
-        "ram_bytes": _detect_ram_bytes(), "gpu": [], "termux": is_termux(),
+        "ram_bytes": _detect_ram_bytes(), "termux": is_termux(),
     }
-    probes: list[list[str]] = []
-    if shutil.which("nvidia-smi"):
-        probes.append(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
-    if shutil.which("rocm-smi"):
-        probes.append(["rocm-smi", "--showproductname"])
-    if platform.system() == "Darwin" and shutil.which("system_profiler"):
-        probes.append(["system_profiler", "SPDisplaysDataType"])
-    if platform.system() == "Windows" and shutil.which("powershell"):
-        probes.append(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"])
-    for cmd in probes:
-        try:
-            result = run(cmd)
-            if result.returncode == 0:
-                info["gpu"] += [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    info["gpu"] = info["gpu"][:8]
-    return info
 
 
 def _existing_file(value: str) -> str | None:
@@ -95,7 +76,6 @@ def find_llama() -> str | None:
         os.getenv("LLAMA_SERVER", ""), shutil.which("llama-server") or "",
         str(Path.home() / "llama.cpp" / "build" / "bin" / "llama-server"),
         str(Path.home() / "llama.cpp" / "llama-server"),
-        str(REPO / "llama.cpp" / "build" / "bin" / "llama-server"),
     ]
     for candidate in candidates:
         found = _existing_file(candidate)
@@ -104,29 +84,27 @@ def find_llama() -> str | None:
     return None
 
 
-def find_model() -> str | None:
-    configured = _existing_file(os.getenv("NEXO_MODEL_PATH", "").strip())
-    if configured and configured.lower().endswith(".gguf"):
-        return configured
+def find_models() -> list[str]:
     roots = [REPO / "models", Path.home() / "models"]
     if is_termux():
         roots.append(Path("/sdcard/Download"))
-    # Deliberately non-recursive: scanning all shared storage is expensive on phones.
+    configured = _existing_file(os.getenv("NEXO_MODEL_PATH", "").strip())
+    found: list[str] = []
+    if configured and configured.lower().endswith(".gguf"):
+        found.append(configured)
     for root in roots:
         try:
             if not root.is_dir():
                 continue
-            for found in root.glob("*.gguf"):
-                if found.is_file():
-                    return str(found.resolve())
+            for item in root.glob("*.gguf"):
+                if item.is_file() and str(item.resolve()) not in found:
+                    found.append(str(item.resolve()))
         except OSError:
             continue
-    return None
+    return found[:50]
 
 
 def init_sqlite() -> None:
-    # memory_engine.py owns schema creation/migrations. Bootstrap only verifies that
-    # the database can be opened; it never rewrites or migrates existing data.
     DB.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB, timeout=10) as conn:
         conn.execute("PRAGMA busy_timeout=10000")
@@ -140,26 +118,15 @@ def ensure_venv() -> Path:
     if not python_path.exists():
         VENV.mkdir(parents=True, exist_ok=True)
         subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
-    if not python_path.is_file():
-        raise RuntimeError(f"virtual environment Python is missing: {python_path}")
     return python_path
 
 
 def setup_python() -> tuple[Path, bool]:
     if sys.version_info < (3, 10):
         raise RuntimeError("Python 3.10+ is required")
-    # Android/Termux already has an established production runtime. Never create a
-    # second venv or reinstall packages there as part of the desktop bootstrap.
     if is_termux():
         return Path(sys.executable).resolve(), False
     return ensure_venv(), True
-
-
-def dependency_manifest() -> Path:
-    manifest = REPO / "requirements-nexo.txt"
-    if not manifest.is_file():
-        raise RuntimeError("requirements-nexo.txt is missing")
-    return manifest
 
 
 def file_sha256(path: Path) -> str:
@@ -170,15 +137,32 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def install_dependencies(py: Path, manifest: Path) -> bool:
+def install_missing_manifest(py: Path, manifest: Path, marker_name: str) -> bool:
     digest = file_sha256(manifest)
-    marker = STATE / "dependencies.sha256"
+    marker = STATE / marker_name
     if marker.exists() and marker.read_text(encoding="utf-8").strip() == digest:
         return False
-    subprocess.run([str(py), "-m", "pip", "install", "-r", str(manifest)], check=True)
+    subprocess.run([str(py), "-m", "pip", "install", "-r", str(manifest)], check=True, timeout=900)
     STATE.mkdir(parents=True, exist_ok=True)
     marker.write_text(digest + "\n", encoding="utf-8")
     return True
+
+
+def detect_python_modules() -> dict[str, bool]:
+    modules = ("requests", "psutil", "pydantic", "httpx", "dotenv", "telegram")
+    return {name: __import__(name) is not None for name in modules if _module_available(name)}
+
+
+def _module_available(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+def detect_termux_api() -> dict[str, bool]:
+    return {name: bool(shutil.which(name)) for name in TERMUX_COMMANDS}
 
 
 def detect_pm2() -> dict[str, object]:
@@ -194,80 +178,137 @@ def detect_pm2() -> dict[str, object]:
     return result
 
 
-def wizard() -> str:
-    if not sys.stdin.isatty():
-        return "personal"
-    value = input("NEXO profile [personal/shared] (personal): ").strip().lower() or "personal"
-    return value if value in {"personal", "shared"} else "personal"
-
-
-def desktop_shortcut() -> bool:
-    if platform.system() != "Linux" or is_termux():
-        return False
-    desktop = Path(os.getenv("XDG_DESKTOP_DIR", str(Path.home() / "Desktop")))
-    if not desktop.is_dir():
-        return False
-    target = desktop / "NEXO.desktop"
-    content = (
-        "[Desktop Entry]\nType=Application\nName=NEXO\nTerminal=true\n"
-        f"Exec=\"{REPO / 'bootstrap.sh'}\"\nPath={REPO}\n"
-    )
-    if target.exists():
+def ensure_env_template() -> tuple[bool, list[str]]:
+    created = False
+    if not ENV_FILE.exists():
+        example = REPO / ".nexo.env.example"
+        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if example.is_file():
+            ENV_FILE.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            ENV_FILE.write_text("LLM_PROVIDER=openrouter\nLLM_API_KEY=\nLLM_MODEL=\nLLM_BASE_URL=https://openrouter.ai/api/v1\n", encoding="utf-8")
         try:
-            return target.read_text(encoding="utf-8") == content
+            ENV_FILE.chmod(0o600)
         except OSError:
+            pass
+        created = True
+    missing: list[str] = []
+    values: dict[str, str] = {}
+    try:
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    except OSError:
+        return created, ["~/.nexo.env"]
+    for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL"):
+        if not values.get(key):
+            missing.append(key)
+    return created, missing
+
+
+def install_alex_command() -> bool:
+    if not is_termux():
+        return False
+    prefix_bin = Path(os.getenv("PREFIX", "")) / "bin"
+    if not prefix_bin.is_dir():
+        return False
+    target = prefix_bin / "alex"
+    content = f'#!/data/data/com.termux/files/usr/bin/sh\nexec "{sys.executable}" "{REPO / "scripts" / "alexctl.py"}" "$@"\n'
+    try:
+        target.write_text(content, encoding="utf-8")
+        target.chmod(0o755)
+        return True
+    except OSError:
+        return False
+
+
+def install_autostart_hook() -> bool:
+    if not is_termux():
+        return False
+    bashrc = Path.home() / ".bashrc"
+    marker = "# >>> NEXO ALEX AUTOSTART >>>"
+    end = "# <<< NEXO ALEX AUTOSTART <<<"
+    block = (
+        f"\n{marker}\n"
+        f'if [ "[object Object]" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
+        f'  alex start >/dev/null 2>&1 || true\n'
+        f"fi\n{end}\n"
+    )
+    try:
+        existing = bashrc.read_text(encoding="utf-8") if bashrc.exists() else ""
+        if marker in existing:
             return False
-    target.write_text(content, encoding="utf-8")
-    target.chmod(0o755)
-    return True
+        bashrc.parent.mkdir(parents=True, exist_ok=True)
+        bashrc.write_text(existing.rstrip() + block, encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Idempotent NEXO one-click bootstrap")
+    parser = argparse.ArgumentParser(description="Idempotent ALEX/NEXO Android-aware bootstrap")
     parser.add_argument("--no-install", action="store_true")
-    parser.add_argument("--wizard", action="store_true")
-    parser.add_argument("--desktop-shortcut", action="store_true")
+    parser.add_argument("--full-deps", action="store_true", help="install the legacy full dependency manifest; not recommended for Android MVB")
+    parser.add_argument("--enable-autostart", action="store_true")
     args = parser.parse_args()
     if not (REPO / ".git").exists():
         print("ERROR: run from a NEXO checkout", file=sys.stderr)
         return 2
     try:
         hw = hardware()
-        llama = find_llama()
-        model = find_model()
-        init_sqlite()
         py, owns_venv = setup_python()
-        manifest = dependency_manifest()
-        installed = False if args.no_install or not owns_venv else install_dependencies(py, manifest)
-        profile = wizard() if args.wizard and not is_termux() else "personal"
-        shortcut = desktop_shortcut() if args.desktop_shortcut and not is_termux() else False
+        init_sqlite()
+        env_created, missing_env = ensure_env_template()
+        if args.no_install:
+            installed = False
+            manifest = MVB_MANIFEST if is_termux() else FULL_MANIFEST
+        else:
+            manifest = FULL_MANIFEST if args.full_deps else (MVB_MANIFEST if is_termux() else FULL_MANIFEST)
+            installed = install_missing_manifest(py, manifest, "dependencies.sha256")
+        llama = find_llama()
+        models = find_models()
+        api = detect_termux_api()
+        pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
+        alex_command = install_alex_command()
+        autostart = install_autostart_hook() if args.enable_autostart else False
         STATE.mkdir(parents=True, exist_ok=True)
         data = {
-            "schema_version": 3, "repo": str(REPO), "hardware": hw,
+            "schema_version": 4, "repo": str(REPO), "hardware": hw,
             "python": {"executable": str(py), "venv": str(VENV) if owns_venv else None},
+            "dependency_profile": "full" if args.full_deps else ("android-mvb" if is_termux() else "full"),
             "dependency_manifest": str(manifest), "dependencies_changed": installed,
-            "llama_server": llama, "model": model,
+            "llama_server": llama, "models": models,
             "telegram_env_file": str(ENV_FILE) if ENV_FILE.exists() else None,
-            "pm2": detect_pm2() if is_termux() else {"available": False, "processes": {}},
-            "profile": profile, "desktop_shortcut": shortcut,
+            "llm": {"provider": os.getenv("LLM_PROVIDER", ""), "configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_MODEL"))},
+            "termux_api": api, "pm2": pm2, "alex_command": alex_command, "autostart_hook_installed": autostart,
+            "env_created": env_created, "missing_env": missing_env,
         }
+        STATE.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, CONFIG)
-    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+    except (OSError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         print(f"ERROR: bootstrap failed: {exc}", file=sys.stderr)
         return 1
-    print("NEXO bootstrap: PASS")
+
+    print("ALEX/NEXO bootstrap: PASS")
     print(f"Platform: {hw['os']} / {hw['machine']}")
-    print(f"Android/Termux mode: {is_termux()}")
-    print(f"Python environment: {py}")
-    print(f"SQLite: {DB}")
-    print(f"Dependency manifest: {manifest}")
-    print(f"Dependencies installed: {installed}")
-    print(f"llama-server: {llama or 'not detected; existing install preserved'}")
-    print(f"GGUF model: {model or 'not detected; configure NEXO_MODEL_PATH when available'}")
-    print(f"Telegram config: {'detected' if ENV_FILE.exists() else 'not configured'}")
-    print(f"PM2: {detect_pm2() if is_termux() else 'desktop runtime managed separately'}")
+    print(f"Android/Termux: {is_termux()}")
+    print(f"Python: {py}")
+    print(f"SQLite: PASS ({DB})")
+    print(f"MVB dependencies: {'installed/updated' if installed else 'already present or skipped'}")
+    print(f"Termux:API: {', '.join(k for k,v in api.items() if v) if is_termux() else 'not applicable'}")
+    print(f"llama-server: {llama or 'not detected (optional for API MVB)'}")
+    print(f"GGUF models: {len(models)} detected")
+    print(f"LLM provider: {os.getenv('LLM_PROVIDER') or 'not loaded in process'}")
+    print(f"LLM config: {'ready' if not missing_env else 'MISSING ' + ', '.join(missing_env)}")
+    print(f"Telegram env: {'present' if ENV_FILE.exists() else 'not present'}")
+    print(f"PM2: {pm2}")
+    print(f"ALEX command: {'installed as alex' if alex_command else 'use python scripts/alexctl.py'}")
+    print(f"Autostart: {'enabled' if autostart else 'not changed'}")
     print(f"Setup state: {CONFIG}")
     return 0
 
