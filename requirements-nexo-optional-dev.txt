@@ -1,0 +1,8 @@
+# Optional development/desktop tooling. Avoid on Android MVB.
+fastapi
+uvicorn
+numpy
+agent-framework
+agent-governance-toolkit[full]
+chromadb
+aider-chat
