@@ -1,10 +1,11 @@
 {
   "assistant_name": "ALEX",
-  "model_backend": "llama.cpp",
-  "qwen_url": "http://127.0.0.1:8080/v1/chat/completions",
-  "model_file": "/sdcard/Download/Qwen3-4B-Q4_K_M.gguf",
-  "context_size": 1024,
-  "max_tokens": 256,
+  "model_backend": "openrouter",
+  "llm_provider": "openrouter",
+  "local_llama_optional": true,
+  "local_model_path": "",
+  "context_size": 4096,
+  "max_tokens": 512,
   "temperature": 0.15,
   "memory": {
     "enabled": true,
