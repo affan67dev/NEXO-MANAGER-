@@ -1,5 +1,5 @@
 {
-  "assistant_name": "NEXO",
+  "assistant_name": "ALEX",
   "model_backend": "llama.cpp",
   "qwen_url": "http://127.0.0.1:8080/v1/chat/completions",
   "model_file": "/sdcard/Download/Qwen3-4B-Q4_K_M.gguf",
@@ -14,7 +14,7 @@
   },
   "tools": {
     "web_search": false,
-    "android_actions": false,
-    "voice": false
+    "android_actions": true,
+    "voice": true
   }
 }
