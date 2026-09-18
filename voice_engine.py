@@ -7,7 +7,8 @@ import importlib.util, json, os, platform, re, shutil, subprocess, time, uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional\nfrom android_capabilities import toast_state
+from typing import Any, Callable, Optional
+from android_capabilities import toast_state
 
 from agents.executive_planner import ExecutivePlanner
 from core.router import create_task
