@@ -155,22 +155,22 @@ def normalize(text: str) -> str:
 def is_wake_word(text: str) -> bool:
     value = normalize(text)
     patterns = (
-        r"^hey[\\s,]+alex(?:\\s|[.!?;:]|$)",
-        r"^hi[\\s,]+alex(?:\\s|[.!?;:]|$)",
-        r"^hey[\\s,]+aleks(?:\\s|[.!?;:]|$)",
-        r"^हे[\\s,]+एलेक्स(?:\\s|[.!?;:]|$)",
-        r"^हाय[\\s,]+एलेक्स(?:\\s|[.!?;:]|$)",
+        r"^hey[\s,]+alex(?:\s|[.!?;:]|$)",
+        r"^hi[\s,]+alex(?:\s|[.!?;:]|$)",
+        r"^hey[\s,]+aleks(?:\s|[.!?;:]|$)",
+        r"^हे[\s,]+एलेक्स(?:\s|[.!?;:]|$)",
+        r"^हाय[\s,]+एलेक्स(?:\s|[.!?;:]|$)",
     )
     return any(re.match(p, value, flags=re.I) for p in patterns)
 
 def remove_wake_word(text: str) -> str:
     value = (text or "").strip()
     patterns = (
-        r"^hey[\\s,]+alex(?:\\s|[,.!?;:]*)",
-        r"^hi[\\s,]+alex(?:\\s|[,.!?;:]*)",
-        r"^hey[\\s,]+aleks(?:\\s|[,.!?;:]*)",
-        r"^हे[\\s,]+एलेक्स(?:\\s|[,.!?;:]*)",
-        r"^हाय[\\s,]+एलेक्स(?:\\s|[,.!?;:]*)",
+        r"^hey[\s,]+alex(?:\s|[,.!?;:]*)",
+        r"^hi[\s,]+alex(?:\s|[,.!?;:]*)",
+        r"^hey[\s,]+aleks(?:\s|[,.!?;:]*)",
+        r"^हे[\s,]+एलेक्स(?:\s|[,.!?;:]*)",
+        r"^हाय[\s,]+एलेक्स(?:\s|[,.!?;:]*)",
     )
     for pattern in patterns:
         value = re.sub(pattern, "", value, flags=re.I)
