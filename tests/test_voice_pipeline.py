@@ -74,6 +74,7 @@ class VoicePipelineTests(unittest.TestCase):
         assistant=NexoVoiceAssistant(
             stt=lambda path: calls.append(path) or {"ok": True, "text": "Hey Alex", "provider": "test"},
             tts=lambda _: True,
+            recorder=lambda seconds: __import__("pathlib").Path(tempfile.gettempdir()) / "alex-test.wav",
         )
         result=assistant.wake_once()
         self.assertTrue(result.ok)
@@ -81,7 +82,7 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(assistant.state, VoiceState.LISTENING)
 
     def test_empty_stt_is_safe(self):
-        assistant=NexoVoiceAssistant(stt=lambda path: {"ok": True, "text": "", "provider": "test"}, tts=lambda _: True)
+        assistant=NexoVoiceAssistant(stt=lambda path: {"ok": True, "text": "", "provider": "test"}, tts=lambda _: True, recorder=lambda seconds: __import__("pathlib").Path(tempfile.gettempdir()) / "alex-empty-test.wav")
         result=assistant.wake_once()
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "wake")
