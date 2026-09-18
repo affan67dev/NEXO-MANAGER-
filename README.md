@@ -1219,3 +1219,36 @@ The repository is intentionally conservative about what the bootstrap promises:
 # Disclaimer
 
 NEXO-MANAGER is provided as a software project. Users who modify the source code, configuration, models, dependencies, security rules, or deployment settings are responsible for testing and validating their changes before using the modified system. Unexpected modifications can affect stability, security, compatibility, or data integrity. Always keep a backup and verify changes in a safe environment before deploying them to a live runtime.
+
+## ALEX Android / Termux MVB
+
+The Android bootstrap uses the lightweight `requirements-nexo-mvb.txt` profile. The legacy `requirements-nexo.txt` remains available for desktop/full installations; heavyweight optional packages are split into separate optional manifests.
+
+Fresh Termux setup:
+
+```bash
+git clone <repository>
+cd NEXO-MANAGER-
+python3 scripts/bootstrap_nexo.py
+python3 scripts/alexctl.py status
+```
+
+Configure `~/.nexo.env` with `LLM_PROVIDER=openrouter`, `LLM_API_KEY`, and `LLM_MODEL`. The bootstrap never prints the API key.
+
+Runtime commands:
+
+```bash
+alex bootstrap
+alex start
+alex stop
+alex restart
+alex status
+alex logs
+alex wake
+alex autostart-on
+alex autostart-off
+```
+
+On Android, `alex start` starts an idle ALEX daemon without opening the microphone. `alex wake` requests exactly one wake recognition attempt; after `Hey Alex`, ALEX enters the existing NEXO Manager execution path and stays active until the configured 30-second inactivity timeout. This is intentional: Termux speech-to-text is a one-shot speech recognizer, not a true always-on hotword engine. ALEX therefore does not fake continuous hotword detection or repeatedly open the microphone while IDLE.
+
+Physical Android verification must still be performed on the target tablet. CI validates the repository on Ubuntu, macOS and Windows but cannot prove Termux/Android hardware behavior.
