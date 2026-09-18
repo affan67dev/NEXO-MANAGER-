@@ -1,0 +1,6 @@
+# Optional web/search/document helpers.
+beautifulsoup4
+lxml
+apscheduler
+aiohttp
+pypdf
