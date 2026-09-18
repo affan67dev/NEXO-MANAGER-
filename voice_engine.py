@@ -130,13 +130,27 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 def is_wake_word(text: str) -> bool:
-    value = normalize(text).replace("’", "'")
-    return any(re.match(r"^" + re.escape(w) + r"(?:\s|[,.!?;:]|$)", value) for w in WAKE_WORDS)
+    value = normalize(text)
+    patterns = (
+        r"^hey[\\s,]+alex(?:\\s|[.!?;:]|$)",
+        r"^hi[\\s,]+alex(?:\\s|[.!?;:]|$)",
+        r"^hey[\\s,]+aleks(?:\\s|[.!?;:]|$)",
+        r"^हे[\\s,]+एलेक्स(?:\\s|[.!?;:]|$)",
+        r"^हाय[\\s,]+एलेक्स(?:\\s|[.!?;:]|$)",
+    )
+    return any(re.match(p, value, flags=re.I) for p in patterns)
 
 def remove_wake_word(text: str) -> str:
     value = (text or "").strip()
-    for word in WAKE_WORDS:
-        value = re.sub(r"^" + re.escape(word) + r"(?:\s|[,.!?;:]*)", "", value, flags=re.I)
+    patterns = (
+        r"^hey[\\s,]+alex(?:\\s|[,.!?;:]*)",
+        r"^hi[\\s,]+alex(?:\\s|[,.!?;:]*)",
+        r"^hey[\\s,]+aleks(?:\\s|[,.!?;:]*)",
+        r"^हे[\\s,]+एलेक्स(?:\\s|[,.!?;:]*)",
+        r"^हाय[\\s,]+एलेक्स(?:\\s|[,.!?;:]*)",
+    )
+    for pattern in patterns:
+        value = re.sub(pattern, "", value, flags=re.I)
     return value.strip(" ,.!?;:")
 
 def _execute_voice_tool(name: str, args: dict[str, Any], *, owner: bool = True,
