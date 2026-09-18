@@ -29,7 +29,7 @@ class Task:
 
 
 class NexoManager:
-    """Central request gate; execution remains downstream in planner/tools."""
+    """Central request gate; execution remains downstream in planner/tools. ALEX is the user-facing identity."""
 
     def __init__(self) -> None:
         self.scope = json.loads(SCOPE_FILE.read_text())
@@ -94,7 +94,7 @@ class NexoManager:
         return task
 
     def status(self) -> dict[str, Any]:
-        return {"identity": "NEXO", "manager_model": "Qwen3-4B", "phase": self.scope["phase"], "mode": self.scope["mode"], "active_scope": self.scope["active_scope"], "deferred_scope": self.scope["deferred_scope"]}
+        return {"identity": "ALEX", "manager_model": "Qwen3-4B", "phase": self.scope["phase"], "mode": self.scope["mode"], "active_scope": self.scope["active_scope"], "deferred_scope": self.scope["deferred_scope"]}
 
 
 if __name__ == "__main__":
