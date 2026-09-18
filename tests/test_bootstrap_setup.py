@@ -48,8 +48,10 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('DB = BASE / "data" / "memory.db"', source)
         self.assertEqual(MOD.DB, ROOT / "data" / "memory.db")
 
-    def test_dependency_manifest_is_shared_repo_manifest(self):
-        self.assertEqual(MOD.dependency_manifest(), ROOT / "requirements-nexo.txt")
+    def test_dependency_profiles_exist(self):
+        self.assertEqual(MOD.MVB_MANIFEST, ROOT / "requirements-nexo-mvb.txt")
+        self.assertEqual(MOD.FULL_MANIFEST, ROOT / "requirements-nexo.txt")
+        self.assertTrue(MOD.MVB_MANIFEST.is_file())
 
     def test_no_destructive_git_operations(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
