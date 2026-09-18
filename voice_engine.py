@@ -290,9 +290,7 @@ class NexoVoiceAssistant:
             return VoiceResult(False, stage="input", state=self.state.value)
         if is_wake_word(text):
             command = remove_wake_word(text)
-            if command:
-                # Wake detection is activation only. Do not execute the remainder.
-                command = ""
+            command_discarded = bool(command)
             self._set_state(VoiceState.WAKE_DETECTED)
             self.last_interaction = time.monotonic()
             self._set_state(VoiceState.SPEAKING)
@@ -300,7 +298,7 @@ class NexoVoiceAssistant:
             spoken = self.tts(response)
             self._set_state(VoiceState.LISTENING if spoken else VoiceState.IDLE)
             return VoiceResult(True, response=response, stage="wake", provider="text",
-                               verified=spoken, details={"tts_verified": spoken, "command_discarded": bool(command)},
+                               verified=spoken, details={"tts_verified": spoken, "command_discarded": command_discarded},
                                state=self.state.value)
         self._set_state(VoiceState.PROCESSING)
         self.last_interaction = time.monotonic()
