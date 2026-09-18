@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from unittest.mock import patch
 from voice_engine import NexoVoiceAssistant, VoiceState, is_wake_word, remove_wake_word
@@ -38,7 +39,10 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(spoken,["Opening youtube."])
 
     def test_stt_failure_is_not_fabricated(self):
-        assistant=NexoVoiceAssistant(stt=lambda path: {"ok":False,"provider":"test","error":"permission denied"}, recorder=lambda seconds: (__import__("pathlib").Path("/tmp/fake.wav").write_bytes(b"x") or __import__("pathlib").Path("/tmp/fake.wav")))
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = __import__("pathlib").Path(tmp) / "fake.wav"
+            fake.write_bytes(b"x")
+            assistant=NexoVoiceAssistant(stt=lambda path: {"ok":False,"provider":"test","error":"permission denied"}, recorder=lambda seconds: fake)
         result=assistant.listen_once()
         self.assertFalse(result.ok); self.assertEqual(result.stage,"stt")
         self.assertNotIn("understood",result.response.lower())
