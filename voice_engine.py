@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 from android_capabilities import toast_state
+from services.llm_provider import LLMConfig
 
 from agents.executive_planner import ExecutivePlanner
 from core.router import create_task
@@ -21,6 +22,7 @@ VOICE_DIR = BASE_DIR / "voice"
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
 RECORD_SECONDS = int(os.getenv("NEXO_VOICE_RECORD_SECONDS", "6"))
 ACTIVE_TIMEOUT_SECONDS = 30.0
+VOICE_IDLE_POLLING = os.getenv("NEXO_VOICE_IDLE_POLLING", "false").strip().lower() == "true"
 WAKE_WORDS = (
     "hey alex", "hi alex", "hey alexa",
     "हे एलेक्स", "हाय एलेक्स", "हे एलेक्सा", "हाय एलेक्सा",
@@ -57,6 +59,24 @@ def _run(command: list[str], timeout: int = 30) -> dict[str, Any]:
 
 def _exists(name: str) -> bool:
     return shutil.which(name) is not None
+
+def _load_runtime_env() -> None:
+    """Load ~/.nexo.env without overwriting explicit process environment variables."""
+    env_file = Path.home() / ".nexo.env"
+    if not env_file.is_file():
+        return
+    try:
+        for raw in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip().strip('\"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        return
+
 
 def speak(text: str) -> bool:
     text = (text or "").strip()
@@ -183,8 +203,16 @@ def _fallback_plan(text: str) -> list[dict[str, Any]]:
 
 def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None = None,
                      confirmation: bool = False, planner: ExecutivePlanner | None = None) -> dict[str, Any]:
+    _load_runtime_env()
     manager_task = create_task(text)
-    planner = planner or ExecutivePlanner()
+    if planner is None:
+        try:
+            LLMConfig.from_env()
+            planner = ExecutivePlanner()
+        except RuntimeError as exc:
+            return {"ok": False, "verified": False,
+                    "response": "ALEX reasoning is not configured. Set LLM_PROVIDER, LLM_API_KEY and LLM_MODEL in ~/.nexo.env.",
+                    "error": str(exc), "stage": "llm_configuration"}
     request_id = f"req-{uuid.uuid4().hex[:12]}"
     try:
         plan = planner.plan_tasks(text, context=[{"intent": manager_task.intent, "agent": manager_task.agent}])
@@ -319,34 +347,66 @@ class NexoVoiceAssistant:
             return True
         return False
 
-    def run_forever(self, owner: bool = True, user_id: int | str | None = None) -> None:
-        while True:
+    def wake_once(self, owner: bool = True, user_id: int | str | None = None) -> VoiceResult:
+        """Perform exactly one wake recognition attempt.
+
+        Termux speech-to-text is one-shot, not a hotword engine. Keeping wake detection
+        explicit prevents an IDLE daemon from repeatedly opening the microphone.
+        """
+        if self.state != VoiceState.IDLE:
+            return VoiceResult(False, stage="wake", details={"error": "voice_session_already_active"}, state=self.state.value)
+        stt = self._listen_input()
+        if not stt.get("ok"):
+            return VoiceResult(False, stage="wake_stt", provider=stt.get("provider", "none"), details=stt, state=self.state.value)
+        text = str(stt.get("text") or "").strip()
+        if not is_wake_word(text):
+            return VoiceResult(False, text=text, stage="wake", provider=stt.get("provider", "unknown"),
+                               details={"wake_detected": False, "stt": stt}, state=self.state.value)
+        result = self.process_text(text, owner=owner, user_id=user_id)
+        result.details["stt"] = stt
+        return result
+
+    def run_active_session(self, owner: bool = True, user_id: int | str | None = None) -> None:
+        """Run only the post-wake conversation loop until 30s of inactivity."""
+        if self.state == VoiceState.IDLE:
+            return
+        while self.state != VoiceState.IDLE:
             try:
-                if self.state == VoiceState.IDLE:
-                    stt = self._listen_input()
-                    if not stt.get("ok"):
-                        time.sleep(0.3)
-                        continue
-                    if not is_wake_word(stt.get("text", "")):
-                        continue
-                    self.process_text(stt["text"], owner=owner, user_id=user_id)
-                    continue
-
                 if self.timeout_check():
-                    continue
-
+                    return
                 self._set_state(VoiceState.LISTENING)
                 stt = self._listen_input()
                 if not stt.get("ok"):
-                    if self.timeout_check():
-                        continue
-                    time.sleep(0.3)
-                    continue
+                    self._set_state(VoiceState.IDLE)
+                    return
                 text = str(stt.get("text") or "").strip()
                 if not text:
+                    if self.timeout_check():
+                        return
                     continue
                 self.last_interaction = time.monotonic()
                 self.process_text(text, owner=owner, user_id=user_id)
+            except KeyboardInterrupt:
+                self._set_state(VoiceState.IDLE)
+                return
+            except Exception:
+                self._set_state(VoiceState.IDLE)
+                return
+
+    def run_forever(self, owner: bool = True, user_id: int | str | None = None) -> None:
+        """Keep runtime alive without pretending Termux STT is an always-on hotword engine."""
+        while True:
+            try:
+                if self.state == VoiceState.IDLE:
+                    if VOICE_IDLE_POLLING:
+                        result = self.wake_once(owner=owner, user_id=user_id)
+                        if result.ok and self.state != VoiceState.IDLE:
+                            self.run_active_session(owner=owner, user_id=user_id)
+                        time.sleep(max(5.0, float(os.getenv("NEXO_VOICE_IDLE_POLL_SECONDS", "10"))))
+                    else:
+                        time.sleep(1.0)
+                    continue
+                self.run_active_session(owner=owner, user_id=user_id)
             except KeyboardInterrupt:
                 self._set_state(VoiceState.IDLE)
                 break
@@ -362,6 +422,7 @@ def self_test() -> dict[str, Any]:
         "faster_whisper_installed": importlib.util.find_spec("faster_whisper") is not None,
         "whisper_cli_installed": any(_exists(x) for x in ("whisper-cli", "whisper-cpp", "whisper")),
         "wake_model_configured": bool(os.getenv("NEXO_WAKE_MODEL")),
+        "idle_microphone_polling": VOICE_IDLE_POLLING,
         "llm": "configured via LLM_PROVIDER",
         "registered_tools": len(schemas()),
         "state_machine": [s.value for s in VoiceState],
