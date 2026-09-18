@@ -1,0 +1,3 @@
+# Optional OCR/document image support. Not required for voice or API reasoning.
+Pillow
+pytesseract
