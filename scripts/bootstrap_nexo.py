@@ -55,7 +55,7 @@ def hardware() -> dict[str, object]:
     return {
         "os": platform.system(), "release": platform.release(), "machine": platform.machine(),
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
-        "ram_bytes": _detect_ram_bytes(), "termux": is_termux(),
+        "ram_bytes": _detect_ram_bytes(), "gpu": [], "termux": is_termux(),
     }
 
 
@@ -102,6 +102,11 @@ def find_models() -> list[str]:
         except OSError:
             continue
     return found[:50]
+
+
+def find_model() -> str | None:
+    models = find_models()
+    return models[0] if models else None
 
 
 def init_sqlite() -> None:
