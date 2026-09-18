@@ -64,6 +64,25 @@ class VoicePipelineTests(unittest.TestCase):
         r=a.process_text("Hey Alex")
         self.assertEqual(a.state,VoiceState.LISTENING); self.assertTrue(r.ok)
 
+
+    def test_wake_once_is_single_stt_attempt(self):
+        calls=[]
+        assistant=NexoVoiceAssistant(
+            stt=lambda path: calls.append(path) or {"ok": True, "text": "Hey Alex", "provider": "test"},
+            tts=lambda _: True,
+        )
+        result=assistant.wake_once()
+        self.assertTrue(result.ok)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(assistant.state, VoiceState.LISTENING)
+
+    def test_empty_stt_is_safe(self):
+        assistant=NexoVoiceAssistant(stt=lambda path: {"ok": True, "text": "", "provider": "test"}, tts=lambda _: True)
+        result=assistant.wake_once()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "wake")
+        self.assertEqual(assistant.state, VoiceState.IDLE)
+
     def test_state_machine_values(self):
         self.assertEqual([s.value for s in VoiceState],["IDLE","WAKE_DETECTED","LISTENING","PROCESSING","SPEAKING"])
 
