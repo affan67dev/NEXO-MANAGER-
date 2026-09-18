@@ -38,7 +38,7 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(spoken,["Opening youtube."])
 
     def test_stt_failure_is_not_fabricated(self):
-        assistant=NexoVoiceAssistant(stt=lambda path: {"ok":False,"provider":"test","error":"permission denied"})
+        assistant=NexoVoiceAssistant(stt=lambda path: {"ok":False,"provider":"test","error":"permission denied"}, recorder=lambda seconds: __import__("pathlib").Path("/tmp/fake.wav"))
         result=assistant.listen_once()
         self.assertFalse(result.ok); self.assertEqual(result.stage,"stt")
         self.assertNotIn("understood",result.response.lower())
