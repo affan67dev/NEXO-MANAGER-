@@ -12,11 +12,16 @@
     "require_confirmation_for_sensitive_actions": true
   },
   "voice": {
-    "stt_enabled": false,
-    "tts_enabled": false,
-    "wake_word_enabled": false
+    "stt_enabled": true,
+    "tts_enabled": true,
+    "wake_word_enabled": true,
+    "wake_word": "Hey Alex",
+    "active_timeout_seconds": 30
   },
   "android": {
-    "enabled": false
+    "enabled": true,
+    "allow_arbitrary_shell": false,
+    "screen_capture_requires_runtime_support": true,
+    "sensitive_actions_require_confirmation": true
   }
 }
