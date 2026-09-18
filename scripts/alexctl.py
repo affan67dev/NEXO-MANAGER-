@@ -97,6 +97,19 @@ def wake() -> int:
     return 1
 
 
+def autostart_on() -> int:
+    DISABLE_FILE.unlink(missing_ok=True)
+    print("ALEX autostart enabled")
+    return 0
+
+
+def autostart_off() -> int:
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    DISABLE_FILE.write_text("disabled\n", encoding="utf-8")
+    print("ALEX autostart disabled")
+    return 0
+
+
 def logs() -> int:
     if not LOG_FILE.exists():
         print("No ALEX log yet.")
@@ -111,7 +124,7 @@ def bootstrap() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe ALEX runtime controller")
-    parser.add_argument("command", choices=("bootstrap", "start", "stop", "restart", "status", "logs", "wake"))
+    parser.add_argument("command", choices=("bootstrap", "start", "stop", "restart", "status", "logs", "wake", "autostart-on", "autostart-off"))
     args = parser.parse_args()
     if args.command == "bootstrap": return bootstrap()
     if args.command == "start": return start()
@@ -121,6 +134,8 @@ def main() -> int:
         return start()
     if args.command == "status": return status()
     if args.command == "logs": return logs()
+    if args.command == "autostart-on": return autostart_on()
+    if args.command == "autostart-off": return autostart_off()
     return wake()
 
 
