@@ -206,6 +206,9 @@ def ensure_env_template() -> tuple[bool, list[str]]:
     for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL"):
         if not values.get(key):
             missing.append(key)
+    for key, value in values.items():
+        if value and key not in os.environ:
+            os.environ[key] = value
     return created, missing
 
 
@@ -273,7 +276,7 @@ def main() -> int:
         api = detect_termux_api()
         pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
         alex_command = install_alex_command()
-        autostart = install_autostart_hook() if args.enable_autostart else False
+        autostart = install_autostart_hook() if args.enable_autostart and alex_command else False
         STATE.mkdir(parents=True, exist_ok=True)
         data = {
             "schema_version": 4, "repo": str(REPO), "hardware": hw,
