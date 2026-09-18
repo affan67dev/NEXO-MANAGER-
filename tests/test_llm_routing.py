@@ -38,6 +38,19 @@ class LLMRoutingTests(unittest.TestCase):
         self.assertEqual(router.choose_model("hi", [], intent="conversation"), "test/model")
         self.assertFalse(router.should_use_secondary("hi", []))
 
+
+    def test_missing_api_key_is_actionable(self):
+        from services.llm_provider import LLMConfig
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "", "LLM_MODEL": "test/model", "LLM_BASE_URL": "https://openrouter.ai/api/v1"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "llm_api_key_not_configured"):
+                LLMConfig.from_env()
+
+    def test_missing_model_is_actionable(self):
+        from services.llm_provider import LLMConfig
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "placeholder", "LLM_MODEL": "", "LLM_BASE_URL": "https://openrouter.ai/api/v1"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "llm_model_not_configured"):
+                LLMConfig.from_env()
+
     def test_provider_failure_has_no_local_fallback(self):
         provider = FakeProvider(error=RuntimeError("llm_provider_unavailable"))
         router = LLMRouter(provider)
