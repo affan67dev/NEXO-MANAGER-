@@ -1,0 +1,2 @@
+# Optional local AI / advanced inference. Not installed by the Android MVB bootstrap.
+faster-whisper
