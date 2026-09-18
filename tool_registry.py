@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -15,6 +16,7 @@ class Tool:
     risk: str = "low"
 
 
+logger = logging.getLogger("nexo.tool_registry")
 _REGISTRY: dict[str, Tool] = {}
 
 
@@ -105,5 +107,6 @@ def execute(name: str, arguments: dict[str, Any], *, owner: bool, user_id: int |
             kwargs["user_id"] = user_id
         result = tool.handler(**kwargs)
         return result if isinstance(result, dict) else {"ok": True, "result": result}
-    except Exception:
+    except Exception as exc:
+        logger.exception("tool_execution_failed tool=%s error=%s", name, type(exc).__name__)
         return {"ok": False, "error": "tool_execution_failed"}
