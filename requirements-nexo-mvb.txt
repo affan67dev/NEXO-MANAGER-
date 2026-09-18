@@ -1,0 +1,7 @@
+# Android/Termux MVB profile. Keep this small and pure-Python where possible.
+requests
+psutil
+pydantic
+httpx
+python-dotenv
+python-telegram-bot>=22,<23
