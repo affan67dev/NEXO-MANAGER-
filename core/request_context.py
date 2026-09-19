@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from core.identity import BotRole, resolve_bot_identity
+
 Channel = Literal["portfolio_web", "telegram"]
-ActorType = Literal["visitor", "telegram_user", "owner"]
+ActorType = Literal["visitor", "public_client", "admin"]
 Scope = Literal["public_portfolio", "telegram_public", "owner_admin"]
 
 
@@ -21,8 +23,8 @@ class RequestContext:
         return cls("portfolio_web", "visitor", "public_portfolio", None, session_id)
 
     @classmethod
-    def telegram(cls, user_id: int | str, owner: bool) -> "RequestContext":
-        uid = str(user_id)
-        if owner:
-            return cls("telegram", "owner", "owner_admin", uid, None)
-        return cls("telegram", "telegram_user", "telegram_public", uid, None)
+    def telegram(cls, user_id: int | str, bot_role: BotRole) -> "RequestContext":
+        identity = resolve_bot_identity(bot_role, user_id)
+        if identity.is_admin:
+            return cls("telegram", "admin", "owner_admin", identity.telegram_user_id, None)
+        return cls("telegram", "public_client", "telegram_public", identity.telegram_user_id, None)

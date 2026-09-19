@@ -30,7 +30,7 @@ def get(name: str) -> Tool | None:
     return _REGISTRY.get(name)
 
 
-def schemas() -> list[dict[str, Any]]:
+def schemas(*, include_owner_only: bool = True) -> list[dict[str, Any]]:
     return [
         {
             "type": "function",
@@ -41,11 +41,12 @@ def schemas() -> list[dict[str, Any]]:
             },
         }
         for t in _REGISTRY.values()
+        if include_owner_only or not t.owner_only
     ]
 
 
-def names() -> list[str]:
-    return list(_REGISTRY)
+def names(*, include_owner_only: bool = True) -> list[str]:
+    return [t.name for t in _REGISTRY.values() if include_owner_only or not t.owner_only]
 
 
 def _validate_arguments(tool: Tool, arguments: dict[str, Any]) -> str | None:
@@ -107,6 +108,6 @@ def execute(name: str, arguments: dict[str, Any], *, owner: bool, user_id: int |
             kwargs["user_id"] = user_id
         result = tool.handler(**kwargs)
         return result if isinstance(result, dict) else {"ok": True, "result": result}
-    except Exception as exc:
-        logger.exception("tool_execution_failed tool=%s error=%s", name, type(exc).__name__)
+    except Exception:
+        logger.exception("tool_execution_failed tool=%s", name)
         return {"ok": False, "error": "tool_execution_failed"}

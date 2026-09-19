@@ -32,7 +32,7 @@ class TelegramConversationTests(unittest.TestCase):
                  patch.object(telegram_llama, "typing_heartbeat", new=fake_typing), \
                  patch.object(telegram_llama, "handle_attachment", new=AsyncMock(return_value=None)), \
                  patch.object(telegram_llama, "planner", fake_planner):
-                await telegram_llama.chat(update, SimpleNamespace())
+                await telegram_llama.chat(update, SimpleNamespace(), "public")
         asyncio.run(scenario())
         self.assertEqual(fake_planner.calls, [])
         self.assertEqual(reply_text.await_args.args[0], "Hello! How can I help?")
