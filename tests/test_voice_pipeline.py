@@ -99,7 +99,7 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(states, ["WAKE_DETECTED", "LISTENING", "PROCESSING", "SPEAKING"])
 
     def test_state_machine_values(self):
-        self.assertEqual([s.value for s in VoiceState],["IDLE","WAKE_DETECTED","LISTENING","PROCESSING","SPEAKING"])
+        self.assertEqual([s.value for s in VoiceState],["IDLE","WAKE_DETECTED","LISTENING","UNDERSTANDING","ANALYSING","DECIDING","PLANNING","AWAITING_CONFIRMATION","EXECUTING","VERIFYING","SPEAKING","ERROR"])
 
 if __name__=="__main__":
     unittest.main()
