@@ -5,11 +5,12 @@ import os
 import re
 import urllib.parse
 from core.platform_adapter import capabilities, current_platform, open_url
+from android_capabilities import launch_app
 
 APP_ALIASES = {
     "youtube": ["youtube", "yt"], "instagram": ["instagram", "insta"],
     "telegram": ["telegram", "tg"], "whatsapp": ["whatsapp", "wa"],
-    "chrome": ["chrome", "google chrome"], "google": ["google"],
+    "chrome": ["chrome", "google chrome"], "google": ["google"], "settings": ["settings"], "calculator": ["calculator", "calc"],
 }
 
 def detect_app(text):
@@ -36,7 +37,14 @@ def extract_query(text, app):
     return re.sub(r"\s+", " ", t).strip()
 
 def open_app(app):
-    urls = {"youtube":"https://www.youtube.com/","instagram":"https://www.instagram.com/","telegram":"https://t.me/","whatsapp":"https://wa.me/","chrome":"https://www.google.com/","google":"https://www.google.com/"}
+    urls = {"youtube":"https://www.youtube.com/","instagram":"https://www.instagram.com/","telegram":"https://t.me/","whatsapp":"https://wa.me/","chrome":"https://www.google.com/","google":"https://www.google.com/", "settings":"content://settings", "calculator":"calculator://"}
+    if current_platform() == "android-termux":
+        result = launch_app(app)
+        if result.get("verified"):
+            return True, f"{app.title()} opened and foreground verification passed."
+        if result.get("error") == "foreground_verification_failed":
+            return False, f"{app.title()} launch was attempted, but foreground verification failed."
+        return False, result.get("detail") or f"{app.title()} could not be opened."
     if app not in urls: return False, f"I don't have an allowed launcher for {app} yet."
     return open_url(urls[app])
 
