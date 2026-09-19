@@ -54,7 +54,14 @@ def toast_state(state: str) -> dict[str, Any]:
     labels = {
         "WAKE_DETECTED": "ALEX • ●",
         "LISTENING": "ALEX • Listening…",
-        "PROCESSING": "ALEX • Thinking…",\n        "UNDERSTANDING": "ALEX • Understanding…",\n        "ANALYSING": "ALEX • Analysing…",\n        "DECIDING": "ALEX • Deciding…",\n        "PLANNING": "ALEX • Planning…",\n        "AWAITING_CONFIRMATION": "ALEX • Confirm?",\n        "EXECUTING": "ALEX • Executing…",\n        "VERIFYING": "ALEX • Verifying…",
+        "PROCESSING": "ALEX • Thinking…",
+        "UNDERSTANDING": "ALEX • Understanding…",
+        "ANALYSING": "ALEX • Analysing…",
+        "DECIDING": "ALEX • Deciding…",
+        "PLANNING": "ALEX • Planning…",
+        "AWAITING_CONFIRMATION": "ALEX • Confirm?",
+        "EXECUTING": "ALEX • Executing…",
+        "VERIFYING": "ALEX • Verifying…",
         "SPEAKING": "ALEX • Speaking…",
         "ERROR": "ALEX • Something went wrong",
     }
