@@ -37,7 +37,6 @@ class VoiceState(str, Enum):
     IDLE = "IDLE"
     WAKE_DETECTED = "WAKE_DETECTED"
     LISTENING = "LISTENING"
-    PROCESSING = "PROCESSING"
     UNDERSTANDING = "UNDERSTANDING"
     ANALYSING = "ANALYSING"
     DECIDING = "DECIDING"
@@ -329,7 +328,6 @@ class NexoVoiceAssistant:
             return VoiceResult(True, response=response, stage="wake", provider="text",
                                verified=spoken, details={"tts_verified": spoken, "command_discarded": command_discarded},
                                state=self.state.value)
-        self._set_state(VoiceState.PROCESSING)
         self.last_interaction = time.monotonic()
         outcome = execute_via_nexo(text, owner=owner, user_id=user_id, confirmation=confirmation, planner=planner, phase_callback=self._set_state)
         response = str(outcome.get("response") or "")
