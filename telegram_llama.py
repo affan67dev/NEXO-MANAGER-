@@ -168,7 +168,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_role: str
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
         identity = resolve_telegram_identity(user.id)
-        request_context = RequestContext.telegram(user.id)
+        request_context = RequestContext.telegram(user.id, bot_role)
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
