@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
 import logging
 import os
@@ -35,6 +37,8 @@ class LLMConfig:
     backoff_seconds: float
     context_tokens: int
     output_tokens: int
+    fallback_models: tuple[str, ...] = ()
+    max_retry_after_seconds: float = 60.0
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -52,6 +56,10 @@ class LLMConfig:
             raise RuntimeError("llm_model_not_configured")
         if not base_url:
             raise RuntimeError("llm_base_url_not_configured")
+        fallback_models = tuple(
+            item for item in (x.strip() for x in os.getenv("LLM_FALLBACK_MODELS", "").split(","))
+            if item and item != model
+        )
         return cls(
             provider=provider,
             api_key=api_key,
@@ -62,6 +70,8 @@ class LLMConfig:
             backoff_seconds=_float_env("LLM_BACKOFF_SECONDS", 0.5, 0.0, 10.0),
             context_tokens=_int_env("LLM_CONTEXT_TOKENS", 4096, 512, 32768),
             output_tokens=_int_env("LLM_OUTPUT_TOKENS", 512, 128, 4096),
+            fallback_models=fallback_models[:3],
+            max_retry_after_seconds=_float_env("LLM_MAX_RETRY_AFTER_SECONDS", 60.0, 0.0, 120.0),
         )
 
 
@@ -82,6 +92,23 @@ def _float_env(name: str, default: float, minimum: float, maximum: float) -> flo
 def _endpoint(base_url: str) -> str:
     value = base_url.rstrip("/")
     return value if value.endswith("/chat/completions") else value + "/chat/completions"
+
+
+def _retry_after_seconds(response: httpx.Response, maximum: float) -> float | None:
+    value = response.headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return min(max(0.0, delay), maximum)
 
 
 def validate_provider_response(data: Any) -> bool:
@@ -115,6 +142,8 @@ class OpenRouterProvider:
             "max_tokens": max(1, min(int(max_tokens), self.config.output_tokens)),
             "stream": False,
         }
+        if self.config.fallback_models:
+            payload["models"] = [self.config.model, *self.config.fallback_models]
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -134,7 +163,12 @@ class OpenRouterProvider:
                         category = f"http_{response.status_code}"
                         logger.warning("llm_provider_failure provider=%s model=%s category=%s attempt=%d latency_ms=%d", self.name, self.model, category, attempt + 1, elapsed_ms)
                         if attempt < self.config.retries:
-                            time.sleep(self.config.backoff_seconds * (2 ** attempt))
+                            delay = self.config.backoff_seconds * (2 ** attempt)
+                            if response.status_code == 429:
+                                retry_after = _retry_after_seconds(response, self.config.max_retry_after_seconds)
+                                if retry_after is not None:
+                                    delay = retry_after
+                            time.sleep(delay)
                             continue
                         raise RuntimeError("llm_provider_unavailable")
                     if response.status_code in {401, 403}:
