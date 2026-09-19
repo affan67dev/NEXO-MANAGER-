@@ -58,6 +58,16 @@ class OrchestratorTests(unittest.TestCase):
     def test_confirmation_is_persisted_and_does_not_crash(self):
         tasks=[TaskSpec("send message",task_id="a"),TaskSpec("follow up",task_id="b",dependencies=["a"])]
         states={x["task_id"]:x["state"] for x in self.orch.run("rc",tasks,lambda task:{"ok":False,"verified":False,"requires_confirmation":True})}; self.assertEqual(states,{"a":"waiting_confirmation","b":"waiting_confirmation"})
+
+    def test_request_status_and_cancel(self):
+        self.store.put("rcancel", TaskSpec("pending", task_id="p"), "queued")
+        self.store.put("rcancel", TaskSpec("done", task_id="d"), "completed")
+        status = self.store.request_status("rcancel")
+        self.assertEqual(status["state"], "running")
+        result = self.store.cancel_request("rcancel")
+        self.assertEqual(result["cancelled"], 1)
+        self.assertEqual(self.store.get_request("rcancel")[0]["state"], "cancelled")
+
     def test_stale_running_task_is_recovered(self):
         task=TaskSpec("recover me",task_id="recover"); self.store.put("recovery",task,"running")
         import datetime,core.task_orchestrator as mod
