@@ -6,7 +6,8 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.identity import authorize_bot_update, resolve_bot_identity\nfrom core import memory_engine
+from core.identity import authorize_bot_update, resolve_bot_identity
+from core import memory_engine
 from tool_registry import Tool, register, schemas
 import telegram_llama
 
