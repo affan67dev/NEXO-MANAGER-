@@ -62,6 +62,21 @@ class BootstrapTests(unittest.TestCase):
         value = MOD.find_model()
         self.assertTrue(value is None or value.lower().endswith(".gguf"))
 
+    def test_ready_flag_is_supported(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        self.assertIn('parser.add_argument("--ready"', source)
+        self.assertIn("def ready_mode(", source)
+
+    def test_termux_voice_api_boundary(self):
+        self.assertIn("termux-speech-to-text", MOD.VOICE_TERMUX_COMMANDS)
+        self.assertIn("termux-tts-speak", MOD.VOICE_TERMUX_COMMANDS)
+        self.assertIn("termux-toast", MOD.VOICE_TERMUX_COMMANDS)
+
+    def test_setup_does_not_download_models(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("wget", source)
+        self.assertNotIn("curl -o", source)
+
 
 if __name__ == "__main__":
     unittest.main()
