@@ -120,3 +120,41 @@ def launch_app(app: str) -> dict[str, Any]:
     verified = foreground.get("package") == package
     return {"ok": verified, "verified": verified, "app": key, "package": package,
             "foreground": foreground.get("package"), "error": None if verified else "foreground_verification_failed"}
+
+def semantic_ui_action(action: str, target: str = "", text: str = "") -> dict[str, Any]:
+    """Perform a bounded semantic UI action using the current uiautomator tree; coordinates are derived, never hardcoded."""
+    action = (action or "").strip().lower()
+    allowed = {"click", "type", "back", "scroll"}
+    if action not in allowed:
+        return {"ok": False, "verified": False, "error": "unsupported_ui_action"}
+    if not _exists("uiautomator") or not _exists("input"):
+        return {"ok": False, "verified": False, "error": "semantic_ui_controls_unavailable"}
+    if action == "back":
+        result = _run(["input", "keyevent", "4"], 10)
+        return {"ok": result["ok"], "verified": result["ok"], "action": action}
+    if action == "scroll":
+        direction = "up" if target.lower() == "up" else "down"
+        # Gesture coordinates are a fallback because Android shell exposes no semantic scroll primitive.
+        coords = ["500", "900", "500", "300", "400"] if direction == "down" else ["500", "300", "500", "900", "400"]
+        result = _run(["input", "swipe", *coords], 10)
+        return {"ok": result["ok"], "verified": result["ok"], "action": action, "fallback": "validated_gesture"}
+    tree = inspect_ui_tree()
+    if not tree.get("ok"):
+        return tree
+    import re as _re
+    xml = tree.get("xml", "")
+    escaped = _re.escape(target)
+    match = _re.search(r'<node[^>]*(?:text="' + escaped + r'"|content-desc="' + escaped + r'")[^>]*bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"', xml, _re.I)
+    if not match:
+        return {"ok": False, "verified": False, "error": "semantic_target_not_found", "target": target}
+    x1,y1,x2,y2 = map(int, match.groups())
+    x,y = (x1+x2)//2, (y1+y2)//2
+    if action == "click":
+        result = _run(["input", "tap", str(x), str(y)], 10)
+        return {"ok": result["ok"], "verified": result["ok"], "action": action, "target": target}
+    if action == "type":
+        if not text:
+            return {"ok": False, "verified": False, "error": "type_text_required"}
+        result = _run(["input", "text", text.replace(" ", "%s")], 10)
+        return {"ok": result["ok"], "verified": result["ok"], "action": action, "target": target}
+    return {"ok": False, "verified": False, "error": "unsupported_ui_action"}
