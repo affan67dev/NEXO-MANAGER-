@@ -37,7 +37,8 @@ def _alive(pid: int | None) -> bool:
 
 def status() -> int:
     pid = _pid()
-    print(json.dumps({"running": _alive(pid), "pid": pid, "log": str(LOG_FILE), "autostart_disabled": DISABLE_FILE.exists()}, indent=2))
+    print(json.dumps({"running": _alive(pid), "pid": pid, "log": str(LOG_FILE),
+                      "autostart_disabled": DISABLE_FILE.exists()}, indent=2))
     return 0
 
 
@@ -50,9 +51,11 @@ def start() -> int:
     log = LOG_FILE.open("a", encoding="utf-8")
     env = os.environ.copy()
     env.setdefault("NEXO_VOICE_IDLE_POLLING", "false")
-    proc = subprocess.Popen([sys.executable, str(REPO / "voice_assistant.py")], cwd=REPO,
-                            env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True, close_fds=True)
+    proc = subprocess.Popen(
+        [sys.executable, str(REPO / "voice_assistant.py")],
+        cwd=REPO, env=env, stdin=subprocess.DEVNULL,
+        stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True,
+    )
     PID_FILE.write_text(str(proc.pid) + "\n", encoding="utf-8")
     time.sleep(0.3)
     if not _alive(proc.pid):
@@ -118,24 +121,40 @@ def logs() -> int:
     return 0
 
 
-def bootstrap() -> int:
-    return subprocess.call([sys.executable, str(REPO / "scripts" / "bootstrap_nexo.py")])
+def bootstrap(ready: bool = False) -> int:
+    command = [sys.executable, str(REPO / "scripts" / "bootstrap_nexo.py")]
+    if ready:
+        command.append("--ready")
+    return subprocess.call(command, cwd=REPO)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe ALEX runtime controller")
-    parser.add_argument("command", choices=("bootstrap", "start", "stop", "restart", "status", "logs", "wake", "autostart-on", "autostart-off"))
+    parser.add_argument(
+        "command",
+        choices=("setup", "bootstrap", "start", "stop", "restart", "status", "logs",
+                 "wake", "autostart-on", "autostart-off"),
+    )
     args = parser.parse_args()
-    if args.command == "bootstrap": return bootstrap()
-    if args.command == "start": return start()
-    if args.command == "stop": return stop()
+    if args.command == "setup":
+        return bootstrap(ready=True)
+    if args.command == "bootstrap":
+        return bootstrap()
+    if args.command == "start":
+        return start()
+    if args.command == "stop":
+        return stop()
     if args.command == "restart":
         stop()
         return start()
-    if args.command == "status": return status()
-    if args.command == "logs": return logs()
-    if args.command == "autostart-on": return autostart_on()
-    if args.command == "autostart-off": return autostart_off()
+    if args.command == "status":
+        return status()
+    if args.command == "logs":
+        return logs()
+    if args.command == "autostart-on":
+        return autostart_on()
+    if args.command == "autostart-off":
+        return autostart_off()
     return wake()
 
 
