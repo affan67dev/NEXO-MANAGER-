@@ -17,7 +17,7 @@ from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.portfolio_store import retrieve_knowledge
 from core.request_context import RequestContext
-from core.identity import resolve_telegram_identity
+from core.identity import authorize_bot_update, resolve_telegram_identity
 from core.router import create_task
 from core.semantic_memory import memory
 from services.document_parser import extract_text
@@ -30,7 +30,7 @@ import nexo_tools
 ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()\nPUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
@@ -47,7 +47,7 @@ MAX_TURNS_CHARS = 900
 MAX_TURN_CHARS = 300
 MAX_UPDATE_QUEUE = 20
 FAST_PATH_MESSAGES = {"hi", "hello", "hey", "hiya", "thanks", "thank you", "ok", "okay"}
-app: Application | None = None
+admin_app: Application | None = None
 
 
 def is_owner(user_id: int) -> bool:
@@ -110,9 +110,9 @@ async def typing_heartbeat(update: Update):
 
 
 async def daily_briefing() -> None:
-    if OWNER_TELEGRAM_USER_ID is None or app is None:
+    if OWNER_TELEGRAM_USER_ID is None or admin_app is None:
         return
-    await app.bot.send_message(chat_id=OWNER_TELEGRAM_USER_ID, text="NEXO daily briefing: runtime scheduler is active. Use system_health for recent runtime errors.")
+    await admin_app.bot.send_message(chat_id=OWNER_TELEGRAM_USER_ID, text="NEXO daily briefing: runtime scheduler is active. Use system_health for recent runtime errors.")
 
 
 async def daily_maintenance() -> None:
@@ -153,14 +153,14 @@ async def handle_attachment(update: Update, user_id: int) -> str | None:
         Path(path).unlink(missing_ok=True)
 
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_role: str):
     global planner
     if not update.message:
         return
     user = update.effective_user
     if user is None:
         return
-    admitted, reason = await load_guard.acquire(user.id)
+    if not authorize_bot_update(bot_role, user.id):\n        await update.message.reply_text(_unauthorized_message())\n        return\n    admitted, reason = await load_guard.acquire(user.id)
     if not admitted:
         messages = {"rate_limited": "Please wait a moment before sending another request.", "overloaded": "NEXO is busy right now. Please try again shortly.", "queue_timeout": "NEXO is under heavy load. Please try again shortly."}
         await update.message.reply_text(messages.get(reason, "NEXO is temporarily busy. Please try again shortly."))
@@ -168,7 +168,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
         identity = resolve_telegram_identity(user.id)
-        request_context = RequestContext.telegram(user.id, identity.role)
+        request_context = RequestContext.telegram(user.id)
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
@@ -208,7 +208,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5)
         knowledge_text = _knowledge_text(knowledge)
         messages = build_llm_messages(text, turns, memory_text, knowledge_text)
-        tool_set = [] if manager_task.intent == "conversation" else schemas()
+        tool_set = [] if manager_task.intent == "conversation" else schemas(include_owner_only=identity.is_admin)
         planner = planner or ExecutivePlanner()
         answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=identity.is_admin, user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
@@ -231,16 +231,45 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await load_guard.release()
 
 
+def _build_application(token: str, bot_role: str) -> Application:
+    application = (Application.builder().token(token).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: chat(update, context, bot_role)))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, lambda update, context: chat(update, context, bot_role)))
+    return application
+
+
+async def _run_bots() -> None:
+    global admin_app
+    if not ADMIN_BOT_TOKEN:
+        raise RuntimeError("ADMIN_TELEGRAM_BOT_TOKEN is not configured")
+    if not PUBLIC_BOT_TOKEN:
+        raise RuntimeError("PUBLIC_TELEGRAM_BOT_TOKEN is not configured")
+
+    admin_app = _build_application(ADMIN_BOT_TOKEN, "admin")
+    public_app = _build_application(PUBLIC_BOT_TOKEN, "public")
+    applications = (admin_app, public_app)
+    try:
+        for application in applications:
+            await application.initialize()
+        for application in applications:
+            await application.start()
+        for application in applications:
+            await application.updater.start_polling(drop_pending_updates=True)
+        scheduler.start(daily_briefing, daily_maintenance)
+        logger.info("NEXO Telegram runtime started with separate admin and public bots")
+        await asyncio.Event().wait()
+    finally:
+        scheduler.stop()
+        for application in reversed(applications):
+            if application.updater and application.updater.running:
+                await application.updater.stop()
+            if application.running:
+                await application.stop()
+            await application.shutdown()
+
+
 def main() -> None:
-    global app
-    if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-    scheduler.start(daily_briefing, daily_maintenance)
-    logger.info("NEXO unified Telegram runtime starting with hosted LLM provider")
-    app.run_polling(drop_pending_updates=True)
+    asyncio.run(_run_bots())
 
 
 if __name__ == "__main__":
