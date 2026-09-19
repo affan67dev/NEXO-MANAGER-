@@ -39,6 +39,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
 logger = logging.getLogger("nexo.telegram")
 planner: ExecutivePlanner | None = None
+_scheduler_started = False
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_MEMORY_CHARS = 600
 MAX_KNOWLEDGE_CHARS = 6000
@@ -119,6 +120,21 @@ async def daily_maintenance() -> None:
         await asyncio.to_thread(prune_old_sessions)
     except Exception:
         logger.exception("scheduled session pruning failed")
+
+
+async def _post_init(application: Application) -> None:
+    global _scheduler_started
+    if _scheduler_started:
+        return
+    scheduler.start(daily_briefing, daily_maintenance)
+    _scheduler_started = True
+
+
+async def _post_shutdown(application: Application) -> None:
+    global _scheduler_started
+    if _scheduler_started:
+        scheduler.stop()
+        _scheduler_started = False
 
 
 async def handle_attachment(update: Update, user_id: int) -> str | None:
@@ -233,10 +249,9 @@ def main() -> None:
     global app
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
+    app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).post_init(_post_init).post_shutdown(_post_shutdown).build())
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-    scheduler.start(daily_briefing, daily_maintenance)
     logger.info("NEXO unified Telegram runtime starting with hosted LLM provider")
     app.run_polling(drop_pending_updates=True)
 
