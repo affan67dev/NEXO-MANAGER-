@@ -30,7 +30,8 @@ import nexo_tools
 ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
-ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()\nPUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()
+PUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
@@ -160,7 +161,10 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_role: str
     user = update.effective_user
     if user is None:
         return
-    if not authorize_bot_update(bot_role, user.id):\n        await update.message.reply_text(_unauthorized_message())\n        return\n    admitted, reason = await load_guard.acquire(user.id)
+    if not authorize_bot_update(bot_role, user.id):
+        await update.message.reply_text(_unauthorized_message())
+        return
+    admitted, reason = await load_guard.acquire(user.id)
     if not admitted:
         messages = {"rate_limited": "Please wait a moment before sending another request.", "overloaded": "NEXO is busy right now. Please try again shortly.", "queue_timeout": "NEXO is under heavy load. Please try again shortly."}
         await update.message.reply_text(messages.get(reason, "NEXO is temporarily busy. Please try again shortly."))
