@@ -32,7 +32,7 @@ if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()
 PUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
-OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
+OWNER_RAW = configured_admin_id() or ""
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
 SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are NEXO, a safe personal AI executive assistant."
@@ -92,6 +92,10 @@ def _knowledge_text(docs: list[dict[str, Any]]) -> str:
         if remaining <= 0:
             break
     return "\n\n--- AUTHORIZED SOURCE ---\n".join(parts)
+
+
+def _unauthorized_message() -> str:
+    return "Sorry, I can't help with that."
 
 
 def _safe_failure_message() -> str:
