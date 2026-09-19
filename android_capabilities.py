@@ -50,10 +50,21 @@ def analyze_screen()->dict[str,Any]:
     record_event("screen_analysis",{"observation":observation})
     return {"ok":True,"verified":True,"path":str(path),**observation}
 
-def toast_state(state:str)->dict[str,Any]:
-    if state not in {"IDLE","LISTENING","PROCESSING","SPEAKING"}:
-        return {"ok":False,"verified":False,"error":"invalid_voice_state"}
+def toast_state(state: str) -> dict[str, Any]:
+    labels = {
+        "WAKE_DETECTED": "ALEX • ●",
+        "LISTENING": "ALEX • Listening…",
+        "PROCESSING": "ALEX • Thinking…",
+        "SPEAKING": "ALEX • Speaking…",
+        "ERROR": "ALEX • Something went wrong",
+    }
+    if state not in labels:
+        return {"ok": False, "verified": False, "error": "invalid_voice_state"}
     if not _exists("termux-toast"):
-        return {"ok":False,"verified":False,"available":False,"error":"toast_unavailable"}
-    result=_run(["termux-toast","-g","top",f"ALEX • {state}"],10)
-    return {"ok":result["ok"],"verified":result["ok"],"state":state}
+        return {"ok": False, "verified": False, "available": False, "error": "toast_unavailable"}
+    result = _run(["termux-toast", "-g", "top", labels[state]], 10)
+    return {"ok": result["ok"], "verified": result["ok"], "state": state, "label": labels[state]}
+
+
+def show_voice_error() -> dict[str, Any]:
+    return toast_state("ERROR")
