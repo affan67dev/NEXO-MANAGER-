@@ -121,6 +121,24 @@ def launch_app(app: str) -> dict[str, Any]:
     return {"ok": verified, "verified": verified, "app": key, "package": package,
             "foreground": foreground.get("package"), "error": None if verified else "foreground_verification_failed"}
 
+def inspect_ui_tree() -> dict[str, Any]:
+    """Return the current accessibility tree when Android exposes uiautomator."""
+    if not _exists("uiautomator"):
+        return {"ok": False, "verified": False, "error": "uiautomator_unavailable"}
+    target = SCREEN_DIR / "ui.xml"
+    result = _run(["uiautomator", "dump", str(target)], 15)
+    if not result["ok"] or not target.exists():
+        return {"ok": False, "verified": False, "error": "ui_tree_dump_failed",
+                "detail": result["stderr"] or result["stdout"]}
+    try:
+        xml = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {"ok": False, "verified": False, "error": "ui_tree_read_failed", "detail": str(exc)}
+    if not xml.strip():
+        return {"ok": False, "verified": False, "error": "ui_tree_empty"}
+    return {"ok": True, "verified": True, "path": str(target), "xml": xml}
+
+
 def semantic_ui_action(action: str, target: str = "", text: str = "") -> dict[str, Any]:
     """Perform bounded semantic UI actions using the current uiautomator tree."""
     action = (action or "").strip().lower()
