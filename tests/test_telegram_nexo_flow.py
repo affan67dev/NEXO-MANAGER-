@@ -29,7 +29,7 @@ class TelegramNexoFlowTests(unittest.IsolatedAsyncioTestCase):
         async def fake_acquire(_): return True, "ok"
         async def fake_release(): return None
         with patch.object(telegram_llama.load_guard, "acquire", fake_acquire), patch.object(telegram_llama.load_guard, "release", fake_release), patch.object(telegram_llama, "typing_heartbeat", fake_heartbeat), patch.object(telegram_llama, "handle_attachment", fake_attachment), patch.object(telegram_llama, "planner", planner), patch.object(telegram_llama, "get_or_create_session", return_value="s1"), patch.object(telegram_llama, "recent_turns", return_value=[]), patch.object(telegram_llama.memory, "search", return_value=[]), patch.object(telegram_llama, "save_turn"), patch.object(telegram_llama, "retrieve_knowledge", return_value=[]):
-            await telegram_llama.chat(update, SimpleNamespace())
+            await telegram_llama.chat(update, SimpleNamespace(), "public")
         return update
 
     async def test_conversation_reaches_llm_path_without_tools(self):
