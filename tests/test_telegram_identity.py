@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from core.identity import authorize_bot_update, resolve_telegram_identity
+from core.identity import authorize_bot_update, resolve_bot_identity, resolve_telegram_identity
 from core.request_context import RequestContext
 
 
@@ -43,8 +43,8 @@ class TelegramIdentityTests(unittest.TestCase):
 
     def test_request_context_is_derived_from_server_identity(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_USER_ID": "8921221615"}, clear=False):
-            admin = RequestContext.telegram(8921221615)
-            client = RequestContext.telegram(987654)
+            admin = RequestContext.telegram(8921221615, "admin")
+            client = RequestContext.telegram(987654, "public")
         self.assertEqual((admin.actor_type, admin.scope), ("admin", "owner_admin"))
         self.assertEqual((client.actor_type, client.scope), ("public_client", "telegram_public"))
 
