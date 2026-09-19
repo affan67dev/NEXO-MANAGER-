@@ -93,7 +93,7 @@ def _knowledge_text(docs: list[dict[str, Any]]) -> str:
 
 
 def _safe_failure_message() -> str:
-    return "NEXO couldn't complete that request right now. The error has been logged."
+    return "ALEX couldn't complete that request right now. The error has been logged."
 
 
 async def typing_heartbeat(update: Update):
