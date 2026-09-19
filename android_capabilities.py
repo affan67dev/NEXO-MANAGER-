@@ -68,3 +68,48 @@ def toast_state(state: str) -> dict[str, Any]:
 
 def show_voice_error() -> dict[str, Any]:
     return toast_state("ERROR")
+
+
+APP_PACKAGES = {
+    "youtube": "com.google.android.youtube",
+    "telegram": "org.telegram.messenger",
+    "whatsapp": "com.whatsapp",
+    "chrome": "com.android.chrome",
+    "instagram": "com.instagram.android",
+    "settings": "com.android.settings",
+    "calculator": "com.google.android.calculator",
+}
+
+def get_foreground_package() -> dict[str, Any]:
+    """Read the actual resumed Android package when the shell exposes it."""
+    for command in (
+        ["dumpsys", "activity", "activities"],
+        ["dumpsys", "activity", "top"],
+    ):
+        if not _exists(command[0]):
+            continue
+        result = _run(command, 10)
+        if not result["ok"]:
+            continue
+        for line in result["stdout"].splitlines():
+            if "mResumedActivity" in line or "mFocusedApp" in line:
+                import re
+                match = re.search(r"([A-Za-z0-9_]+\.[A-Za-z0-9_.]+)/(?:[A-Za-z0-9_.$]+)", line)
+                if match:
+                    return {"ok": True, "verified": True, "package": match.group(1)}
+    return {"ok": False, "verified": False, "error": "foreground_package_unavailable"}
+
+def launch_app(app: str) -> dict[str, Any]:
+    key = (app or "").strip().lower()
+    package = APP_PACKAGES.get(key)
+    if not package:
+        return {"ok": False, "verified": False, "error": "app_not_allowlisted", "app": key}
+    if not _exists("monkey"):
+        return {"ok": False, "verified": False, "error": "android_launcher_unavailable", "app": key}
+    result = _run(["monkey", "-p", package, "1"], 15)
+    if not result["ok"]:
+        return {"ok": False, "verified": False, "error": "app_launch_failed", "detail": result["stderr"] or result["stdout"], "app": key}
+    foreground = get_foreground_package()
+    verified = foreground.get("package") == package
+    return {"ok": verified, "verified": verified, "app": key, "package": package,
+            "foreground": foreground.get("package"), "error": None if verified else "foreground_verification_failed"}
