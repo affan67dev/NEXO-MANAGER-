@@ -23,8 +23,8 @@ class RequestContext:
         return cls("portfolio_web", "visitor", "public_portfolio", None, session_id)
 
     @classmethod
-    def telegram(cls, user_id: int | str) -> "RequestContext":
-        identity = resolve_telegram_identity(user_id)
+    def telegram(cls, user_id: int | str, bot_role: BotRole) -> "RequestContext":
+        identity = resolve_bot_identity(bot_role, user_id)
         if identity.is_admin:
             return cls("telegram", "admin", "owner_admin", identity.telegram_user_id, None)
         return cls("telegram", "public_client", "telegram_public", identity.telegram_user_id, None)
