@@ -61,7 +61,7 @@ class TelegramNexoFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_failure_is_isolated_to_one_clean_message(self):
         planner = FakePlanner(error=RuntimeError("llm_provider_unavailable"))
         update = await self._common("Explain why this failed", planner)
-        self.assertEqual(update.message.reply_text.await_args.args[0], "NEXO couldn't complete that request right now. The error has been logged.")
+        self.assertEqual(update.message.reply_text.await_args.args[0], "ALEX couldn't complete that request right now. The error has been logged.")
         self.assertEqual(update.message.reply_text.await_count, 1)
 
 
