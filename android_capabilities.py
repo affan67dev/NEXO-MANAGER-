@@ -122,10 +122,9 @@ def launch_app(app: str) -> dict[str, Any]:
             "foreground": foreground.get("package"), "error": None if verified else "foreground_verification_failed"}
 
 def semantic_ui_action(action: str, target: str = "", text: str = "") -> dict[str, Any]:
-    """Perform a bounded semantic UI action using the current uiautomator tree; coordinates are derived, never hardcoded."""
+    """Perform bounded semantic UI actions using the current uiautomator tree."""
     action = (action or "").strip().lower()
-    allowed = {"click", "type", "back", "scroll"}
-    if action not in allowed:
+    if action not in {"click", "type", "back", "scroll"}:
         return {"ok": False, "verified": False, "error": "unsupported_ui_action"}
     if not _exists("uiautomator") or not _exists("input"):
         return {"ok": False, "verified": False, "error": "semantic_ui_controls_unavailable"}
@@ -133,20 +132,25 @@ def semantic_ui_action(action: str, target: str = "", text: str = "") -> dict[st
         result = _run(["input", "keyevent", "4"], 10)
         return {"ok": result["ok"], "verified": result["ok"], "action": action}
     if action == "scroll":
-        direction = "up" if target.lower() == "up" else "down"
-        # Gesture coordinates are a fallback because Android shell exposes no semantic scroll primitive.
-        coords = ["500", "900", "500", "300", "400"] if direction == "down" else ["500", "300", "500", "900", "400"]
+        coords = ["500", "900", "500", "300", "400"] if target.lower() != "up" else ["500", "300", "500", "900", "400"]
         result = _run(["input", "swipe", *coords], 10)
         return {"ok": result["ok"], "verified": result["ok"], "action": action, "fallback": "validated_gesture"}
     tree = inspect_ui_tree()
     if not tree.get("ok"):
         return tree
     import re as _re
-    xml = tree.get("xml", "")
-    escaped = _re.escape(target)
-    match = _re.search(r'<node[^>]*(?:text="' + escaped + r'"|content-desc="' + escaped + r'")[^>]*bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"', xml, _re.I)
-    if not match:
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(tree.get("xml", ""))
+    except ET.ParseError:
+        return {"ok": False, "verified": False, "error": "ui_tree_parse_failed"}
+    node = next((n for n in root.iter("node")
+                 if target and (n.attrib.get("text") == target or n.attrib.get("content-desc") == target)), None)
+    if node is None:
         return {"ok": False, "verified": False, "error": "semantic_target_not_found", "target": target}
+    match = _re.fullmatch(r"\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]", node.attrib.get("bounds", ""))
+    if not match:
+        return {"ok": False, "verified": False, "error": "semantic_bounds_unavailable"}
     x1,y1,x2,y2 = map(int, match.groups())
     x,y = (x1+x2)//2, (y1+y2)//2
     if action == "click":
@@ -158,3 +162,4 @@ def semantic_ui_action(action: str, target: str = "", text: str = "") -> dict[st
         result = _run(["input", "text", text.replace(" ", "%s")], 10)
         return {"ok": result["ok"], "verified": result["ok"], "action": action, "target": target}
     return {"ok": False, "verified": False, "error": "unsupported_ui_action"}
+
