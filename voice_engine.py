@@ -279,6 +279,12 @@ class NexoVoiceAssistant:
 
     def _set_state(self, state: VoiceState) -> None:
         self.state = state
+        if state is VoiceState.IDLE:
+            return
+        try:
+            toast_state(state.value)
+        except Exception:
+            logger.debug("voice_ui_update_failed", exc_info=True)
 
     def activation_response(self) -> str:
         return "Yes, how can I help you?"
@@ -390,6 +396,11 @@ class NexoVoiceAssistant:
                 self._set_state(VoiceState.IDLE)
                 return
             except Exception:
+                try:
+                    from android_capabilities import show_voice_error
+                    show_voice_error()
+                except Exception:
+                    logger.debug("voice_error_ui_failed", exc_info=True)
                 self._set_state(VoiceState.IDLE)
                 return
 
