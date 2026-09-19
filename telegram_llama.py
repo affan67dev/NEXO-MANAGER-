@@ -17,6 +17,7 @@ from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.portfolio_store import retrieve_knowledge
 from core.request_context import RequestContext
+from core.identity import resolve_telegram_identity
 from core.router import create_task
 from core.semantic_memory import memory
 from services.document_parser import extract_text
@@ -50,7 +51,7 @@ app: Application | None = None
 
 
 def is_owner(user_id: int) -> bool:
-    return OWNER_TELEGRAM_USER_ID is not None and user_id == OWNER_TELEGRAM_USER_ID
+    return resolve_telegram_identity(user_id).is_admin
 
 
 def _clip(text: str, limit: int) -> str:
@@ -166,7 +167,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
-        request_context = RequestContext.telegram(user.id, is_owner(user.id))
+        identity = resolve_telegram_identity(user.id)
+        request_context = RequestContext.telegram(user.id, identity.role)
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
@@ -208,7 +210,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         messages = build_llm_messages(text, turns, memory_text, knowledge_text)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
         planner = planner or ExecutivePlanner()
-        answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=request_context.actor_type == "owner", user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
+        answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=identity.is_admin, user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
         if not answer:
             raise RuntimeError("empty_model_response")
