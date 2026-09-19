@@ -65,7 +65,7 @@ def looks_sensitive(text: str) -> bool:
 
 def save_memory(category, content, importance=5, source="conversation", user_id: int | str | None = None):
     content = str(content or "").strip()
-    if not content or len(content) > MAX_MEMORY_CHARS or looks_sensitive(content):
+    if user_id is None or not content or len(content) > MAX_MEMORY_CHARS or looks_sensitive(content):
         return False
     try:
         with _connect() as conn:
@@ -78,7 +78,7 @@ def save_memory(category, content, importance=5, source="conversation", user_id:
 
 def search_memory(keyword, limit=5, user_id: int | str | None = None):
     keyword = str(keyword or "").strip()
-    if not keyword:
+    if user_id is None or not keyword:
         return []
     try:
         with _connect() as conn:
