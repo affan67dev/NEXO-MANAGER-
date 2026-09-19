@@ -60,7 +60,7 @@ class TelegramBotSeparationTests(unittest.IsolatedAsyncioTestCase):
         acquire.assert_not_awaited()
         retrieve.assert_not_called()
         planner.assert_not_called()
-        self.assertEqual(update.message.replies, ["This bot is not available for this account."])
+        self.assertEqual(update.message.replies, ["Sorry, I can't help with that."])
 
     async def test_admin_bot_allowlist_is_numeric_id_only(self):
         self.assertTrue(authorize_bot_update("admin", 8921221615))
