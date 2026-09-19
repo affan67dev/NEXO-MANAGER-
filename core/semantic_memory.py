@@ -71,7 +71,7 @@ class SemanticMemory:
 
     def add(self, content: str, category: str = "general", importance: int = 5, source: str = "conversation", user_id: int | str | None = None) -> bool:
         content = (content or "").strip()
-        if not content or len(content) > MAX_CONTENT_CHARS or looks_sensitive(content):
+        if user_id is None or not content or len(content) > MAX_CONTENT_CHARS or looks_sensitive(content):
             return False
         importance = max(1, min(int(importance), 10))
         uid = str(user_id or "")
@@ -88,7 +88,7 @@ class SemanticMemory:
 
     def search(self, query: str, limit: int = 5, user_id: int | str | None = None) -> list[dict[str, Any]]:
         query = (query or "").strip()
-        if not query:
+        if user_id is None or not query:
             return []
         safe_limit = max(1, min(int(limit), 10))
         uid = str(user_id or "")

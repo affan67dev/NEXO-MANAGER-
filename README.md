@@ -1222,6 +1222,34 @@ NEXO-MANAGER is provided as a software project. Users who modify the source code
 
 ## ALEX Android / Termux MVB
 
+The one-command Android setup is now:
+
+```bash
+alex setup
+```
+
+Equivalent repository command:
+
+```bash
+python3 scripts/bootstrap_nexo.py --ready
+```
+
+Setup is idempotent. It keeps the existing Termux Python runtime, verifies/installs the lightweight MVB dependencies, checks the Termux:API voice commands, loads `~/.nexo.env`, detects the configured LLM backend, starts already-configured PM2 NEXO processes when present, verifies the local llama health endpoint when local Llama is required, and starts the existing ALEX voice runtime. It never downloads a GGUF model or replaces an existing llama.cpp installation.
+
+ALEX voice state changes drive the Android visual indicator through the existing Termux capability layer:
+
+```text
+WAKE_DETECTED -> ALEX • ●
+LISTENING     -> ALEX • Listening…
+PROCESSING    -> ALEX • Thinking…
+SPEAKING      -> ALEX • Speaking…
+```
+
+On the current Termux MVB, this indicator uses `termux-toast`, so it is a small transient Android-native indicator rather than a persistent/full-screen overlay. A larger floating overlay would require a dedicated Android UI capability that is not currently present in the repository; setup does not invent one.
+
+ALEX continues to use the existing one-shot Termux speech recognition behavior. It does not fake continuous microphone polling while IDLE, and voice requests continue through the existing NEXO Manager planner/tool path.
+
+
 The Android bootstrap uses the lightweight `requirements-nexo-mvb.txt` profile. The legacy `requirements-nexo.txt` remains available for desktop/full installations; heavyweight optional packages are split into separate optional manifests.
 
 Fresh Termux setup:

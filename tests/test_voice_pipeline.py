@@ -88,8 +88,17 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(result.stage, "wake")
         self.assertEqual(assistant.state, VoiceState.IDLE)
 
+    @patch("voice_engine.toast_state")
+    def test_voice_states_update_android_ui(self, toast):
+        assistant = NexoVoiceAssistant(tts=lambda _: True)
+        assistant._set_state(VoiceState.WAKE_DETECTED)
+        assistant._set_state(VoiceState.LISTENING)
+        assistant._set_state(VoiceState.SPEAKING)
+        states = [call.args[0] for call in toast.call_args_list]
+        self.assertEqual(states, ["WAKE_DETECTED", "LISTENING", "SPEAKING"])
+
     def test_state_machine_values(self):
-        self.assertEqual([s.value for s in VoiceState],["IDLE","WAKE_DETECTED","LISTENING","PROCESSING","SPEAKING"])
+        self.assertEqual([s.value for s in VoiceState],["IDLE","WAKE_DETECTED","LISTENING","UNDERSTANDING","ANALYSING","DECIDING","PLANNING","AWAITING_CONFIRMATION","EXECUTING","VERIFYING","SPEAKING","ERROR"])
 
 if __name__=="__main__":
     unittest.main()

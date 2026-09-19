@@ -5,6 +5,11 @@ import unittest
 from services.security.permissions import authorize, inspect_request
 from tool_registry import schemas
 
+    def test_private_memory_tools_require_authenticated_user(self):
+        from nexo_tools import _memory_search, _history_search
+        self.assertFalse(_memory_search("anything", user_id=None)["verified"])
+        self.assertFalse(_history_search("anything", user_id=None)["verified"])
+
 class SecurityTests(unittest.TestCase):
     def test_owner_required(self):
         self.assertFalse(authorize("device_action", False)["allowed"])

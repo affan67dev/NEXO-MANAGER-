@@ -37,7 +37,7 @@ class NexoManager:
 
     def in_scope(self, text: str) -> bool:
         t = (text or "").lower()
-        keywords = {"app", "application", "backend", "api", "server", "database", "user", "support", "email", "whatsapp", "security", "report", "moderation", "bug", "error", "crash", "log", "deployment", "testing", "monitoring", "authentication", "login", "performance", "code", "youtube", "instagram", "telegram", "chrome", "google", "open", "launch", "khol", "kholo", "play", "song", "music", "wifi", "torch", "battery", "split", "window", "pip", "device", "phone", "tablet", "android", "computer", "mac", "windows"}
+        keywords = {"app", "application", "backend", "api", "server", "database", "user", "support", "email", "whatsapp", "security", "report", "moderation", "bug", "error", "crash", "log", "deployment", "testing", "monitoring", "authentication", "login", "performance", "code", "youtube", "instagram", "telegram", "chrome", "google", "settings", "calculator", "calc", "open", "launch", "khol", "kholo", "play", "song", "music", "wifi", "torch", "battery", "split", "window", "pip", "device", "phone", "tablet", "android", "computer", "mac", "windows"}
         return any(k in t for k in keywords)
 
     def classify(self, text: str) -> str:
@@ -46,7 +46,7 @@ class NexoManager:
             return "conversation"
         if any(x in t for x in ("security", "hack", "vulnerability", "breach", "token", "credential")): return "security"
         if any(x in t for x in ("delete", "wipe", "factory reset", "shutdown", "format", "payment", "send message")): return "security"
-        if any(x in t for x in ("youtube", "instagram", "telegram", "whatsapp", "chrome", "google", "open", "launch", "play", "song", "music", "wifi", "torch", "battery", "split", "window", "pip", "device", "phone", "tablet")): return "device_control"
+        if any(x in t for x in ("youtube", "instagram", "telegram", "whatsapp", "chrome", "google", "settings", "calculator", "calc", "open", "launch", "play", "song", "music", "wifi", "torch", "battery", "split", "window", "pip", "device", "phone", "tablet")): return "device_control"
         if any(x in t for x in ("bug", "error", "exception", "code", "backend", "api", "fix", "debug", "root cause")): return "coding"
         if any(x in t for x in ("database", "db", "query", "migration", "backup")): return "database"
         if any(x in t for x in ("user", "support", "complaint", "email", "report")): return "support"

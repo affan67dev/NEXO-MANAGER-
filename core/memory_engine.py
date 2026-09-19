@@ -65,7 +65,7 @@ def looks_sensitive(text: str) -> bool:
 
 def save_memory(category, content, importance=5, source="conversation", user_id: int | str | None = None):
     content = str(content or "").strip()
-    if not content or len(content) > MAX_MEMORY_CHARS or looks_sensitive(content):
+    if user_id is None or not content or len(content) > MAX_MEMORY_CHARS or looks_sensitive(content):
         return False
     try:
         with _connect() as conn:
@@ -78,7 +78,7 @@ def save_memory(category, content, importance=5, source="conversation", user_id:
 
 def search_memory(keyword, limit=5, user_id: int | str | None = None):
     keyword = str(keyword or "").strip()
-    if not keyword:
+    if user_id is None or not keyword:
         return []
     try:
         with _connect() as conn:
@@ -108,34 +108,55 @@ def get_or_create_session(user_id: int | str) -> str:
         return session_id
 
 
-def touch_session(session_id: str) -> None:
+def touch_session(session_id: str, user_id: int | str | None = None) -> bool:
+    if not session_id or user_id is None:
+        return False
     with _connect() as conn:
         _ensure_schema(conn)
-        conn.execute("UPDATE sessions SET last_activity=? WHERE session_id=?", (datetime.now(timezone.utc).isoformat(), session_id))
+        cur = conn.execute(
+            "UPDATE sessions SET last_activity=? WHERE session_id=? AND user_id=?",
+            (datetime.now(timezone.utc).isoformat(), session_id, str(user_id)),
+        )
+        return cur.rowcount == 1
 
 
 def save_turn(session_id: str, user_id: int | str, role: str, content: str) -> bool:
-    if role not in {"user", "assistant"} or not content or looks_sensitive(content):
+    if role not in {"user", "assistant"} or not content or looks_sensitive(content) or not session_id:
         return False
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            conn.execute("INSERT INTO conversation_messages(session_id,user_id,role,content) VALUES(?,?,?,?)", (session_id, str(user_id), role, content))
-            conn.execute("UPDATE sessions SET last_activity=? WHERE session_id=?", (datetime.now(timezone.utc).isoformat(), session_id))
+            owner = conn.execute("SELECT 1 FROM sessions WHERE session_id=? AND user_id=?", (session_id, str(user_id))).fetchone()
+            if owner is None:
+                return False
+            conn.execute(
+                "INSERT INTO conversation_messages(session_id,user_id,role,content) VALUES(?,?,?,?)",
+                (session_id, str(user_id), role, content),
+            )
+            conn.execute(
+                "UPDATE sessions SET last_activity=? WHERE session_id=? AND user_id=?",
+                (datetime.now(timezone.utc).isoformat(), session_id, str(user_id)),
+            )
         return True
     except sqlite3.Error:
         return False
 
 
-def recent_turns(session_id: str, limit: int = 8):
+def recent_turns(session_id: str, user_id: int | str | None = None, limit: int = 8):
+    if user_id is None or not session_id:
+        return []
     try:
         with _connect() as conn:
             _ensure_schema(conn)
-            rows = conn.execute("SELECT role,content FROM conversation_messages WHERE session_id=? ORDER BY id DESC LIMIT ?", (session_id, max(1, min(int(limit), 8)))).fetchall()
+            rows = conn.execute(
+                "SELECT cm.role,cm.content FROM conversation_messages cm "
+                "JOIN sessions s ON s.session_id=cm.session_id AND s.user_id=cm.user_id "
+                "WHERE cm.session_id=? AND cm.user_id=? ORDER BY cm.id DESC LIMIT ?",
+                (session_id, str(user_id), max(1, min(int(limit), 8))),
+            ).fetchall()
         return list(reversed(rows))
     except sqlite3.Error:
         return []
-
 
 def prune_old_sessions(days: int = 7) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)

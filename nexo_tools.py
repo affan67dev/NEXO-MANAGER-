@@ -8,7 +8,7 @@ from services.intelligence.tavily import search as tavily_search
 from services.self_healing import health_report
 from services.github_safe import status as git_status
 from tools.device import run as device_run
-from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, toast_state
+from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, inspect_ui_tree, semantic_ui_action, toast_state
 from tool_registry import Tool, register
 
 MAX_QUERY_CHARS = 2000
@@ -31,6 +31,8 @@ def _window_control(primary_app: str, secondary_app: str | None = None, mode: st
     ok, msg = app_router.window_control(primary_app, secondary_app, mode); return {"ok": ok, "message": msg, "verified": ok}
 
 def _memory_search(query: str, limit: int = 5, user_id: int | str | None = None) -> dict:
+    if user_id is None:
+        return {"ok": False, "results": [], "verified": False, "error": "authenticated_user_required"}
     return {"ok": True, "results": memory.search(_bounded_text(query, MAX_QUERY_CHARS), limit, user_id=user_id), "verified": True}
 
 def _memory_add(content: str, category: str = "general", importance: int = 5, user_id: int | str | None = None) -> dict:
@@ -58,10 +60,21 @@ def _screen_analyze(user_id: int | str | None = None) -> dict:
 def _android_capabilities(user_id: int | str | None = None) -> dict:
     return {"ok": True, "verified": True, "capabilities": android_capabilities()}
 
+def _ui_tree(user_id: int | str | None = None) -> dict:
+    from android_capabilities import inspect_ui_tree
+    return inspect_ui_tree()
+
+
+def _ui_action(action: str, target: str = "", text: str = "", user_id: int | str | None = None) -> dict:
+    return semantic_ui_action(action, target, text)
+
+
 def _voice_indicator(state: str, user_id: int | str | None = None) -> dict:
     return toast_state(state)
 
 def _history_search(query: str = "", limit: int = 10, user_id: int | str | None = None) -> dict:
+    if user_id is None:
+        return {"ok": False, "verified": False, "results": [], "error": "authenticated_user_required"}
     return {"ok": True, "verified": True, "results": search_events(_bounded_text(query,500),limit)}
 
 def _history_add(event_type: str, details: str, user_id: int | str | None = None) -> dict:
@@ -69,7 +82,7 @@ def _history_add(event_type: str, details: str, user_id: int | str | None = None
     return {"ok":ok,"verified":ok}
 
 def register_all() -> None:
-    register(Tool("app_open","Open an allowed app/site on the supported device.",{"type":"object","properties":{"app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google"]}},"required":["app"],"additionalProperties":False},_app_open))
+    register(Tool("app_open","Open an allowed app/site on the supported device.",{"type":"object","properties":{"app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google","whatsapp","settings","calculator"]}},"required":["app"],"additionalProperties":False},_app_open))
     register(Tool("app_search","Search an allowed app/site.",{"type":"object","properties":{"app":{"type":"string","enum":["youtube","google","chrome"]},"query":{"type":"string","minLength":1,"maxLength":2000}},"required":["app","query"],"additionalProperties":False},_app_search))
     register(Tool("media_play","Attempt to open a media search/play request in an allowed media app.",{"type":"object","properties":{"app":{"type":"string","enum":["youtube"]},"query":{"type":"string","minLength":1,"maxLength":2000}},"required":["app","query"],"additionalProperties":False},_media_play,risk="low"))
     register(Tool("window_control","Arrange supported Android apps using a configured window/split-screen adapter.",{"type":"object","properties":{"primary_app":{"type":"string","enum":["youtube","instagram","telegram","chrome","google","whatsapp"]},"secondary_app":{"type":["string","null"],"enum":["youtube","instagram","telegram","chrome","google","whatsapp",None]},"mode":{"type":"string","enum":["split","pip","side_by_side"]}},"required":["primary_app","mode"],"additionalProperties":False},_window_control))
@@ -82,7 +95,9 @@ def register_all() -> None:
     register(Tool("android_capabilities","Report actual available Termux:API capabilities.",{"type":"object","properties":{},"additionalProperties":False},_android_capabilities,owner_only=False,risk="low"))
     register(Tool("screen_capture","Capture the current Android screen through Termux:API; never fakes availability.",{"type":"object","properties":{},"additionalProperties":False},_screen_capture,owner_only=True,risk="medium"))
     register(Tool("screen_analyze","Capture and OCR/analyze the current Android screen; reports unavailable analysis explicitly.",{"type":"object","properties":{},"additionalProperties":False},_screen_analyze,owner_only=True,risk="medium"))
-    register(Tool("voice_indicator","Show the minimal ALEX voice state indicator when Termux toast is available.",{"type":"object","properties":{"state":{"type":"string","enum":["IDLE","LISTENING","PROCESSING","SPEAKING"]}},"required":["state"],"additionalProperties":False},_voice_indicator,owner_only=True,risk="low"))
+    register(Tool("ui_tree_inspect","Inspect the current Android accessibility/UI tree when the device exposes uiautomator.",{"type":"object","properties":{},"additionalProperties":False},_ui_tree,owner_only=True,risk="medium"))
+    register(Tool("ui_action","Perform a bounded semantic Android UI action such as click, type, back, or scroll.",{"type":"object","properties":{"action":{"type":"string","enum":["click","type","back","scroll"]},"target":{"type":"string","maxLength":500},"text":{"type":"string","maxLength":2000}},"required":["action"],"additionalProperties":False},_ui_action,owner_only=True,risk="medium"))
+    register(Tool("voice_indicator","Show the minimal ALEX voice state indicator when Termux toast is available.",{"type":"object","properties":{"state":{"type":"string","enum":["IDLE","WAKE_DETECTED","LISTENING","UNDERSTANDING","ANALYSING","DECIDING","PLANNING","AWAITING_CONFIRMATION","EXECUTING","VERIFYING","SPEAKING","ERROR"]}},"required":["state"],"additionalProperties":False},_voice_indicator,owner_only=True,risk="low"))
     register(Tool("operational_history_search","Query verified ALEX/NEXO operational history from the existing SQLite memory database.",{"type":"object","properties":{"query":{"type":"string","maxLength":500},"limit":{"type":"integer","minimum":1,"maximum":20}},"additionalProperties":False},_history_search,owner_only=True,risk="low"))
     register(Tool("operational_history_add","Record a non-sensitive operational event in the existing SQLite memory database.",{"type":"object","properties":{"event_type":{"type":"string","minLength":1,"maxLength":100},"details":{"type":"string","minLength":1,"maxLength":4000}},"required":["event_type","details"],"additionalProperties":False},_history_add,owner_only=True,risk="low"))
 

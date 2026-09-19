@@ -93,7 +93,7 @@ def _knowledge_text(docs: list[dict[str, Any]]) -> str:
 
 
 def _safe_failure_message() -> str:
-    return "NEXO couldn't complete that request right now. The error has been logged."
+    return "ALEX couldn't complete that request right now. The error has been logged."
 
 
 async def typing_heartbeat(update: Update):
@@ -200,7 +200,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I can't process that request in the current NEXO scope.")
             return
         session_id = get_or_create_session(user.id)
-        turns = recent_turns(session_id, limit=8)
+        turns = recent_turns(session_id, user_id=user.id, limit=8)
         memories = memory.search(text, limit=4, user_id=user.id)
         memory_text = "\n".join(x["content"] for x in memories) or "(none)"
         knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5)

@@ -56,6 +56,25 @@ class TaskStore:
         with self._lock,self._conn() as c:
             rows=c.execute("SELECT * FROM nexo_tasks WHERE request_id=? ORDER BY created_at",(rid,)).fetchall();cols=[x[1] for x in c.execute("PRAGMA table_info(nexo_tasks)")]
         return [dict(zip(cols,r)) for r in rows]
+    def request_status(self,rid):
+        rows=self.get_request(rid)
+        states=[r.get("state") for r in rows]
+        if not rows: return {"request_id":rid,"state":"unknown","tasks":[]}
+        if all(s=="completed" for s in states): state="completed"
+        elif any(s=="failed" for s in states): state="failed"
+        elif any(s=="cancelled" for s in states): state="cancelled"
+        elif any(s=="waiting_confirmation" for s in states): state="waiting"
+        elif any(s in {"running","retrying","planning","queued"} for s in states): state="running"
+        else: state="waiting"
+        return {"request_id":rid,"state":state,"tasks":rows}
+
+    def cancel_request(self,rid):
+        self.init()
+        with self._lock,self._conn() as c:
+            now=_now()
+            cur=c.execute("UPDATE nexo_tasks SET state='cancelled',updated_at=?,error='cancelled_by_user' WHERE request_id=? AND state NOT IN ('completed','failed','cancelled')",(now,rid))
+        return {"request_id":rid,"cancelled":cur.rowcount}
+
     def recover_stale(self,max_age_seconds=300):
         self.init();cutoff=(datetime.now(timezone.utc)-timedelta(seconds=max(1,max_age_seconds))).isoformat();out=[]
         with self._lock,self._conn() as c:
