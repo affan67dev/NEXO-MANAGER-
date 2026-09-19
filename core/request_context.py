@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from core.identity import resolve_telegram_identity
+from core.identity import BotRole, resolve_bot_identity
 
 Channel = Literal["portfolio_web", "telegram"]
 ActorType = Literal["visitor", "public_client", "admin"]
