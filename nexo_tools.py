@@ -8,7 +8,7 @@ from services.intelligence.tavily import search as tavily_search
 from services.self_healing import health_report
 from services.github_safe import status as git_status
 from tools.device import run as device_run
-from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, inspect_ui_tree, toast_state
+from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, inspect_ui_tree, semantic_ui_action, toast_state
 from tool_registry import Tool, register
 
 MAX_QUERY_CHARS = 2000
@@ -83,7 +83,7 @@ def register_all() -> None:
     register(Tool("screen_capture","Capture the current Android screen through Termux:API; never fakes availability.",{"type":"object","properties":{},"additionalProperties":False},_screen_capture,owner_only=True,risk="medium"))
     register(Tool("screen_analyze","Capture and OCR/analyze the current Android screen; reports unavailable analysis explicitly.",{"type":"object","properties":{},"additionalProperties":False},_screen_analyze,owner_only=True,risk="medium"))
     register(Tool("ui_tree_inspect","Inspect the current Android accessibility/UI tree when the device exposes uiautomator.",{"type":"object","properties":{},"additionalProperties":False},_ui_tree,owner_only=True,risk="medium"))
-    register(Tool("voice_indicator","Show the minimal ALEX voice state indicator when Termux toast is available.",{"type":"object","properties":{"state":{"type":"string","enum":["IDLE","WAKE_DETECTED","LISTENING","UNDERSTANDING","ANALYSING","DECIDING","PLANNING","AWAITING_CONFIRMATION","EXECUTING","VERIFYING","SPEAKING","ERROR"]}},"required":["state"],"additionalProperties":False},_voice_indicator,owner_only=True,risk="low"))
+    register(Tool("ui_action","Perform a bounded semantic Android UI action such as click, type, back, or scroll.",{"type":"object","properties":{"action":{"type":"string","enum":["click","type","back","scroll"]},"target":{"type":"string","maxLength":500},"text":{"type":"string","maxLength":2000}},"required":["action"],"additionalProperties":False},_ui_action,owner_only=True,risk="medium"))\n    register(Tool("voice_indicator","Show the minimal ALEX voice state indicator when Termux toast is available.",{"type":"object","properties":{"state":{"type":"string","enum":["IDLE","WAKE_DETECTED","LISTENING","UNDERSTANDING","ANALYSING","DECIDING","PLANNING","AWAITING_CONFIRMATION","EXECUTING","VERIFYING","SPEAKING","ERROR"]}},"required":["state"],"additionalProperties":False},_voice_indicator,owner_only=True,risk="low"))
     register(Tool("operational_history_search","Query verified ALEX/NEXO operational history from the existing SQLite memory database.",{"type":"object","properties":{"query":{"type":"string","maxLength":500},"limit":{"type":"integer","minimum":1,"maximum":20}},"additionalProperties":False},_history_search,owner_only=True,risk="low"))
     register(Tool("operational_history_add","Record a non-sensitive operational event in the existing SQLite memory database.",{"type":"object","properties":{"event_type":{"type":"string","minLength":1,"maxLength":100},"details":{"type":"string","minLength":1,"maxLength":4000}},"required":["event_type","details"],"additionalProperties":False},_history_add,owner_only=True,risk="low"))
 
