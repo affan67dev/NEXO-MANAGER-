@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.identity import authorize_bot_update
+from core.identity import authorize_bot_update, resolve_bot_identity\nfrom core import memory_engine
 from tool_registry import Tool, register, schemas
 import telegram_llama
 
@@ -68,6 +68,29 @@ class TelegramBotSeparationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(telegram_llama.load_guard, "acquire", new=AsyncMock(return_value=(False, "rate_limited"))):
             await telegram_llama.chat(update, None, "public")
         self.assertEqual(update.message.replies, ["Please wait a moment before sending another request."])
+
+    def test_public_users_have_isolated_memory_by_numeric_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_db = memory_engine.DB
+            memory_engine.DB = Path(tmp) / "memory.db"
+            try:
+                memory_engine.save_memory("requirements", "client A private requirement", user_id=1001)
+                memory_engine.save_memory("requirements", "client B private requirement", user_id=1002)
+                self.assertEqual(
+                    [row[1] for row in memory_engine.search_memory("private", user_id=1001)],
+                    ["client A private requirement"],
+                )
+                self.assertEqual(
+                    [row[1] for row in memory_engine.search_memory("private", user_id=1002)],
+                    ["client B private requirement"],
+                )
+            finally:
+                memory_engine.DB = old_db
+
+    def test_public_bot_never_inherits_admin_role(self):
+        self.assertEqual(resolve_bot_identity("public", 8921221615).role, "public_client")
+        with self.assertRaises(PermissionError):
+            resolve_bot_identity("admin", 777777)
 
     def test_public_bot_schema_excludes_owner_only_tools(self):
         marker = Tool(
