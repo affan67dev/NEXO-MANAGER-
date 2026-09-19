@@ -10,7 +10,9 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 REPO = Path(__file__).resolve().parents[1]
 STATE = Path.home() / ".nexo" / "setup"
@@ -25,6 +27,7 @@ TERMUX_COMMANDS = (
     "termux-speech-to-text", "termux-microphone-record", "termux-tts-speak",
     "termux-toast", "termux-screenshot", "termux-battery-status",
 )
+VOICE_TERMUX_COMMANDS = ("termux-speech-to-text", "termux-tts-speak", "termux-toast")
 
 
 def is_termux() -> bool:
@@ -155,7 +158,7 @@ def install_missing_manifest(py: Path, manifest: Path, marker_name: str) -> bool
 
 def detect_python_modules() -> dict[str, bool]:
     modules = ("requests", "psutil", "pydantic", "httpx", "dotenv", "telegram")
-    return {name: __import__(name) is not None for name in modules if _module_available(name)}
+    return {name: _module_available(name) for name in modules}
 
 
 def _module_available(name: str) -> bool:
@@ -168,6 +171,18 @@ def _module_available(name: str) -> bool:
 
 def detect_termux_api() -> dict[str, bool]:
     return {name: bool(shutil.which(name)) for name in TERMUX_COMMANDS}
+
+
+def ensure_termux_api() -> tuple[dict[str, bool], bool]:
+    before = detect_termux_api()
+    if not is_termux() or all(before.get(name, False) for name in VOICE_TERMUX_COMMANDS):
+        return before, False
+    pkg = shutil.which("pkg")
+    if not pkg:
+        return before, False
+    subprocess.run([pkg, "install", "-y", "termux-api"], cwd=REPO, check=False, timeout=180)
+    after = detect_termux_api()
+    return after, after != before
 
 
 def detect_pm2() -> dict[str, object]:
@@ -183,7 +198,51 @@ def detect_pm2() -> dict[str, object]:
     return result
 
 
-def ensure_env_template() -> tuple[bool, list[str]]:
+def start_existing_pm2(pm2: dict[str, object]) -> dict[str, bool]:
+    if not pm2.get("available"):
+        return {}
+    binary = shutil.which("pm2")
+    if not binary:
+        return {}
+    started: dict[str, bool] = {}
+    processes = pm2.get("processes", {})
+    for name in PM2_NAMES:
+        if not processes.get(name):
+            continue
+        result = run([binary, "start", name, "--update-env"], timeout=30)
+        started[name] = result.returncode == 0
+    return started
+
+
+def pm2_online(name: str) -> bool:
+    binary = shutil.which("pm2")
+    if not binary:
+        return False
+    try:
+        result = run([binary, "jlist"], timeout=20)
+        if result.returncode != 0:
+            return False
+        data = json.loads(result.stdout or "[]")
+        return any(
+            item.get("name") == name and item.get("pm2_env", {}).get("status") == "online"
+            for item in data
+        )
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return False
+
+
+def check_llama_health(url: str = "http://127.0.0.1:8080/health", timeout: int = 5) -> bool:
+    try:
+        with urlopen(Request(url, method="GET"), timeout=timeout) as response:
+            if response.status != 200:
+                return False
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+            return payload.get("ok") is True
+    except Exception:
+        return False
+
+
+def load_env_file() -> tuple[bool, list[str]]:
     created = False
     if not ENV_FILE.exists():
         example = REPO / ".nexo.env.example"
@@ -191,7 +250,11 @@ def ensure_env_template() -> tuple[bool, list[str]]:
         if example.is_file():
             ENV_FILE.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
         else:
-            ENV_FILE.write_text("LLM_PROVIDER=openrouter\nLLM_API_KEY=\nLLM_MODEL=\nLLM_BASE_URL=https://openrouter.ai/api/v1\n", encoding="utf-8")
+            ENV_FILE.write_text(
+                "LLM_PROVIDER=openrouter\nLLM_API_KEY=\nLLM_MODEL=\n"
+                "LLM_BASE_URL=https://openrouter.ai/api/v1\n",
+                encoding="utf-8",
+            )
         try:
             ENV_FILE.chmod(0o600)
         except OSError:
@@ -205,7 +268,7 @@ def ensure_env_template() -> tuple[bool, list[str]]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
+            values[key.strip()] = value.strip().strip('"').strip("'")
     except OSError:
         return created, ["~/.nexo.env"]
     for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL"):
@@ -241,8 +304,8 @@ def install_autostart_hook() -> bool:
     end = "# <<< NEXO ALEX AUTOSTART <<<"
     block = (
         f"\n{marker}\n"
-        f'if [ "[object Object]" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
-        f'  alex start >/dev/null 2>&1 || true\n'
+        'if [ "$NEXO_ALEX_AUTOSTART" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
+        "  alex start >/dev/null 2>&1 || true\n"
         f"fi\n{end}\n"
     )
     try:
@@ -256,11 +319,91 @@ def install_autostart_hook() -> bool:
         return False
 
 
+def start_alex() -> bool:
+    controller = REPO / "scripts" / "alexctl.py"
+    result = subprocess.run([sys.executable, str(controller), "start"], cwd=REPO, text=True, capture_output=True, timeout=30)
+    return result.returncode == 0
+
+
+def build_state(hw: dict[str, object], py: Path, owns_venv: bool, manifest: Path,
+                installed: bool, llama: str | None, models: list[str],
+                api: dict[str, bool], pm2: dict[str, object], started: dict[str, bool],
+                missing_env: list[str], alex_command: bool, autostart: bool,
+                ready: bool, failures: list[str]) -> dict[str, object]:
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    local_provider = provider in {"local", "llama", "llama.cpp", "llama-server"}
+    return {
+        "schema_version": 5, "repo": str(REPO), "hardware": hw,
+        "python": {"executable": str(py), "venv": str(VENV) if owns_venv else None},
+        "dependency_profile": "full" if not is_termux() else "android-mvb",
+        "dependency_manifest": str(manifest), "dependencies_changed": installed,
+        "llama_server": llama, "models": models,
+        "llm": {
+            "provider": provider or None, "local_required": local_provider,
+            "configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_MODEL")) if not local_provider else bool(os.getenv("LLM_MODEL") or models),
+        },
+        "termux_api": api, "pm2": pm2, "pm2_started": started,
+        "alex_command": alex_command, "autostart_hook_installed": autostart,
+        "env_created": False, "missing_env": missing_env,
+        "ready": ready, "failures": failures,
+        "server_health": check_llama_health() if local_provider else None,
+    }
+
+
+def ready_mode(py: Path, hw: dict[str, object], manifest: Path, installed: bool,
+               missing_env: list[str], alex_command: bool, autostart: bool) -> tuple[dict[str, object], list[str]]:
+    failures: list[str] = []
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    local_required = provider in {"local", "llama", "llama.cpp", "llama-server"}
+    llama = find_llama()
+    models = find_models()
+    api, _ = ensure_termux_api()
+    pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
+    started = start_existing_pm2(pm2) if is_termux() else {}
+    time.sleep(1.0)
+
+    if is_termux():
+        for name in VOICE_TERMUX_COMMANDS:
+            if not api.get(name, False):
+                failures.append(f"Termux:API component missing: {name}")
+
+    if missing_env:
+        failures.extend(f"configuration missing: {key}" for key in missing_env)
+
+    if local_required:
+        if not llama:
+            failures.append("local llama-server not detected")
+        if not models:
+            failures.append("local GGUF model not found")
+        if llama and models and not check_llama_health():
+            failures.append("llama-server /health did not return ok:true")
+        if pm2.get("processes", {}).get("nexo-llama") and not pm2_online("nexo-llama"):
+            failures.append("PM2 nexo-llama is not online")
+    else:
+        if not provider:
+            failures.append("LLM_PROVIDER is not configured")
+        if provider and not os.getenv("LLM_API_KEY"):
+            failures.append("LLM_API_KEY is not configured")
+        if provider and not os.getenv("LLM_MODEL"):
+            failures.append("LLM_MODEL is not configured")
+
+    if pm2.get("processes", {}).get("nexo-backend") and not pm2_online("nexo-backend"):
+        failures.append("PM2 nexo-backend is not online")
+
+    if not start_alex():
+        failures.append("ALEX runtime failed to start")
+
+    data = build_state(hw, py, False, manifest, installed, llama, models, api, pm2, started,
+                       missing_env, alex_command, autostart, not failures, failures)
+    return data, failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Idempotent ALEX/NEXO Android-aware bootstrap")
     parser.add_argument("--no-install", action="store_true")
-    parser.add_argument("--full-deps", action="store_true", help="install the legacy full dependency manifest; not recommended for Android MVB")
+    parser.add_argument("--full-deps", action="store_true", help="install the legacy full dependency manifest")
     parser.add_argument("--enable-autostart", action="store_true")
+    parser.add_argument("--ready", action="store_true", help="prepare existing runtime, start services/ALEX, and verify readiness")
     args = parser.parse_args()
     if not (REPO / ".git").exists():
         print("ERROR: run from a NEXO checkout", file=sys.stderr)
@@ -269,32 +412,29 @@ def main() -> int:
         hw = hardware()
         py, owns_venv = setup_python()
         init_sqlite()
-        env_created, missing_env = ensure_env_template()
+        env_created, missing_env = load_env_file()
         if args.no_install:
             installed = False
             manifest = MVB_MANIFEST if is_termux() else FULL_MANIFEST
         else:
             manifest = FULL_MANIFEST if args.full_deps else (MVB_MANIFEST if is_termux() else FULL_MANIFEST)
             installed = install_missing_manifest(py, manifest, "dependencies.sha256")
-        llama = find_llama()
-        models = find_models()
-        api = detect_termux_api()
-        pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
         alex_command = install_alex_command()
         autostart = install_autostart_hook() if args.enable_autostart and alex_command else False
+
+        if args.ready:
+            data, failures = ready_mode(py, hw, manifest, installed, missing_env, alex_command, autostart)
+        else:
+            api = detect_termux_api()
+            pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
+            llama = find_llama()
+            models = find_models()
+            data = build_state(hw, py, owns_venv, manifest, installed, llama, models, api, pm2, {},
+                               missing_env, alex_command, autostart, False, [])
+            failures = []
+
         STATE.mkdir(parents=True, exist_ok=True)
-        data = {
-            "schema_version": 4, "repo": str(REPO), "hardware": hw,
-            "python": {"executable": str(py), "venv": str(VENV) if owns_venv else None},
-            "dependency_profile": "full" if args.full_deps else ("android-mvb" if is_termux() else "full"),
-            "dependency_manifest": str(manifest), "dependencies_changed": installed,
-            "llama_server": llama, "models": models,
-            "telegram_env_file": str(ENV_FILE) if ENV_FILE.exists() else None,
-            "llm": {"provider": os.getenv("LLM_PROVIDER", ""), "configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_MODEL"))},
-            "termux_api": api, "pm2": pm2, "alex_command": alex_command, "autostart_hook_installed": autostart,
-            "env_created": env_created, "missing_env": missing_env,
-        }
-        STATE.mkdir(parents=True, exist_ok=True)
+        data["env_created"] = env_created
         tmp = CONFIG.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, CONFIG)
@@ -302,22 +442,37 @@ def main() -> int:
         print(f"ERROR: bootstrap failed: {exc}", file=sys.stderr)
         return 1
 
-    print("ALEX/NEXO bootstrap: PASS")
-    print(f"Platform: {hw['os']} / {hw['machine']}")
-    print(f"Android/Termux: {is_termux()}")
-    print(f"Python: {py}")
-    print(f"SQLite: PASS ({DB})")
-    print(f"MVB dependencies: {'installed/updated' if installed else 'already present or skipped'}")
-    print(f"Termux:API: {', '.join(k for k,v in api.items() if v) if is_termux() else 'not applicable'}")
-    print(f"llama-server: {llama or 'not detected (optional for API MVB)'}")
-    print(f"GGUF models: {len(models)} detected")
-    print(f"LLM provider: {os.getenv('LLM_PROVIDER') or 'not loaded in process'}")
-    print(f"LLM config: {'ready' if not missing_env else 'MISSING ' + ', '.join(missing_env)}")
-    print(f"Telegram env: {'present' if ENV_FILE.exists() else 'not present'}")
-    print(f"PM2: {pm2}")
-    print(f"ALEX command: {'installed as alex' if alex_command else 'use python scripts/alexctl.py'}")
-    print(f"Autostart: {'enabled' if autostart else 'not changed'}")
-    print(f"Setup state: {CONFIG}")
+    print("ALEX Android Setup" if args.ready else "ALEX/NEXO bootstrap")
+    print("────────────────────────")
+    print(f"[{'OK' if hw['termux'] else 'INFO'}] Android / Termux: {hw['termux']}")
+    print(f"[OK] Python: {py}")
+    print(f"[OK] Dependencies: {'installed/updated' if installed else 'already present or skipped'}")
+    if hw["termux"]:
+        api_ok = all(data["termux_api"].get(name, False) for name in VOICE_TERMUX_COMMANDS)
+        print(f"[{'OK' if api_ok else 'FAIL'}] Termux:API")
+    else:
+        print("[INFO] Termux:API not applicable")
+    provider = data["llm"].get("provider") or "not configured"
+    print(f"[{'OK' if not missing_env else 'FAIL'}] Configuration: {provider}")
+    if data["llm"].get("local_required"):
+        print(f"[{'OK' if data.get('llama_server') else 'FAIL'}] llama-server: {data.get('llama_server') or 'not detected'}")
+        print(f"[{'OK' if data.get('models') else 'FAIL'}] GGUF model: {len(data.get('models', []))} detected")
+        print(f"[{'OK' if data.get('server_health') else 'FAIL'}] LLM health: {'ok:true' if data.get('server_health') else 'failed'}")
+    else:
+        print("[OK] LLM backend: " + provider)
+        print("[INFO] LLM server: not required")
+    print(f"[{'OK' if data.get('alex_command') else 'INFO'}] ALEX command: {'installed as alex' if data.get('alex_command') else 'use python scripts/alexctl.py'}")
+    if args.ready:
+        print(f"[{'OK' if data.get('pm2', {}).get('processes') else 'INFO'}] Existing PM2 runtime: {data.get('pm2', {}).get('processes', {})}")
+        print(f"[{'OK' if not any('ALEX runtime' in f for f in failures) else 'FAIL'}] ALEX voice runtime")
+        print(f"[{'OK' if not failures else 'FAIL'}] Health/readiness")
+        if failures:
+            for failure in failures:
+                print(f"  - {failure}")
+            print("\nALEX setup incomplete.")
+            return 1
+        print('\nALEX is READY.')
+        print('Say: "Hey Alex"')
     return 0
 
 
