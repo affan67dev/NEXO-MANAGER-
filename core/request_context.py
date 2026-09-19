@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from core.identity import resolve_telegram_identity
+
 Channel = Literal["portfolio_web", "telegram"]
 ActorType = Literal["visitor", "public_client", "admin"]
 Scope = Literal["public_portfolio", "telegram_public", "owner_admin"]
@@ -21,10 +23,8 @@ class RequestContext:
         return cls("portfolio_web", "visitor", "public_portfolio", None, session_id)
 
     @classmethod
-    def telegram(cls, user_id: int | str, role: str) -> "RequestContext":
-        uid = str(user_id)
-        if role == "admin":
-            return cls("telegram", "admin", "owner_admin", uid, None)
-        if role == "public_client":
-            return cls("telegram", "public_client", "telegram_public", uid, None)
-        raise ValueError("invalid_telegram_role")
+    def telegram(cls, user_id: int | str) -> "RequestContext":
+        identity = resolve_telegram_identity(user_id)
+        if identity.is_admin:
+            return cls("telegram", "admin", "owner_admin", identity.telegram_user_id, None)
+        return cls("telegram", "public_client", "telegram_public", identity.telegram_user_id, None)
