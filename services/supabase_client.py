@@ -30,13 +30,65 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
-    def health_check(self) -> bool:
-        response = httpx.get(
-            f"{self.url}/rest/v1/",
-            headers=self.headers,
-            timeout=10.0,
-        )
-        return response.status_code < 400
+    def health_check(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Check Supabase reachability and public-key acceptance separately.
+
+        The Data API root (/rest/v1/) is intentionally not used here because
+        Supabase now restricts its OpenAPI schema endpoint to secret keys.
+        The Auth settings endpoint is suitable for validating a configured
+        public/anon key without accessing application data or bypassing RLS.
+        """
+
+        try:
+            response = httpx.get(
+                f"{self.url}/auth/v1/settings",
+                headers=self.headers,
+                timeout=timeout,
+            )
+        except httpx.RequestError as exc:
+            return {
+                "status": "network_unreachable",
+                "reachable": False,
+                "credential_accepted": False,
+                "http_status": None,
+                "error": exc.__class__.__name__,
+            }
+
+        status = response.status_code
+        if 200 <= status < 300:
+            return {
+                "status": "credential_accepted",
+                "reachable": True,
+                "credential_accepted": True,
+                "http_status": status,
+            }
+        if status == 401:
+            return {
+                "status": "credential_rejected",
+                "reachable": True,
+                "credential_accepted": False,
+                "http_status": status,
+            }
+        if status == 403:
+            return {
+                "status": "endpoint_permission_failure",
+                "reachable": True,
+                "credential_accepted": False,
+                "http_status": status,
+            }
+        if 400 <= status < 500:
+            return {
+                "status": "endpoint_failure",
+                "reachable": True,
+                "credential_accepted": False,
+                "http_status": status,
+            }
+        return {
+            "status": "service_failure",
+            "reachable": True,
+            "credential_accepted": False,
+            "http_status": status,
+        }
 
     def select(
         self,
