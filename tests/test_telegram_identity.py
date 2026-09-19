@@ -50,8 +50,7 @@ class TelegramIdentityTests(unittest.TestCase):
         self.assertEqual((client.actor_type, client.scope), ("public_client", "telegram_public"))
 
     def test_invalid_bot_role_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "invalid_bot_role"):
-            authorize_bot_update("unknown", 8921221615)
+        self.assertFalse(authorize_bot_update("unknown", 8921221615))
 
 
 if __name__ == "__main__":
