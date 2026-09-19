@@ -27,10 +27,11 @@ class TelegramIdentityTests(unittest.TestCase):
             self.assertTrue(authorize_bot_update("admin", 8921221615))
             self.assertFalse(authorize_bot_update("admin", 987654))
 
-    def test_public_bot_allows_public_identity(self):
+    def test_public_bot_allows_users_without_admin_privileges(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_USER_ID": "8921221615"}, clear=False):
             self.assertTrue(authorize_bot_update("public", 987654))
-            self.assertFalse(authorize_bot_update("public", 8921221615))
+            self.assertTrue(authorize_bot_update("public", 8921221615))
+            self.assertEqual(resolve_bot_identity("public", 8921221615).role, "public_client")
 
     def test_username_or_message_cannot_change_role(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_USER_ID": "8921221615"}, clear=False):
