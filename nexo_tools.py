@@ -58,6 +58,15 @@ def _screen_analyze(user_id: int | str | None = None) -> dict:
 def _android_capabilities(user_id: int | str | None = None) -> dict:
     return {"ok": True, "verified": True, "capabilities": android_capabilities()}
 
+def _ui_tree(user_id: int | str | None = None) -> dict:
+    from android_capabilities import inspect_ui_tree
+    return inspect_ui_tree()
+
+
+def _ui_action(action: str, target: str = "", text: str = "", user_id: int | str | None = None) -> dict:
+    return semantic_ui_action(action, target, text)
+
+
 def _voice_indicator(state: str, user_id: int | str | None = None) -> dict:
     return toast_state(state)
 
