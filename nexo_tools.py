@@ -31,6 +31,8 @@ def _window_control(primary_app: str, secondary_app: str | None = None, mode: st
     ok, msg = app_router.window_control(primary_app, secondary_app, mode); return {"ok": ok, "message": msg, "verified": ok}
 
 def _memory_search(query: str, limit: int = 5, user_id: int | str | None = None) -> dict:
+    if user_id is None:
+        return {"ok": False, "results": [], "verified": False, "error": "authenticated_user_required"}
     return {"ok": True, "results": memory.search(_bounded_text(query, MAX_QUERY_CHARS), limit, user_id=user_id), "verified": True}
 
 def _memory_add(content: str, category: str = "general", importance: int = 5, user_id: int | str | None = None) -> dict:
@@ -71,6 +73,8 @@ def _voice_indicator(state: str, user_id: int | str | None = None) -> dict:
     return toast_state(state)
 
 def _history_search(query: str = "", limit: int = 10, user_id: int | str | None = None) -> dict:
+    if user_id is None:
+        return {"ok": False, "verified": False, "results": [], "error": "authenticated_user_required"}
     return {"ok": True, "verified": True, "results": search_events(_bounded_text(query,500),limit)}
 
 def _history_add(event_type: str, details: str, user_id: int | str | None = None) -> dict:
