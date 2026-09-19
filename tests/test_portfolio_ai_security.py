@@ -95,8 +95,8 @@ class PortfolioAIHostedTests(unittest.TestCase):
 
 class RequestContextTests(unittest.TestCase):
     def test_telegram_owner_scope_is_server_derived(self):
-        self.assertEqual(RequestContext.telegram(42, True).scope, "owner_admin")
-        self.assertEqual(RequestContext.telegram(42, False).scope, "telegram_public")
+        self.assertEqual(RequestContext.telegram(42, "admin").scope, "owner_admin")
+        self.assertEqual(RequestContext.telegram(42, "public_client").scope, "telegram_public")
 
     def test_portfolio_context_cannot_be_owner(self):
         context = RequestContext.portfolio("session")
