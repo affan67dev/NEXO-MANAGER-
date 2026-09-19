@@ -209,6 +209,9 @@ def start_existing_pm2(pm2: dict[str, object]) -> dict[str, bool]:
     for name in PM2_NAMES:
         if not processes.get(name):
             continue
+        if pm2_online(name):
+            started[name] = False
+            continue
         result = run([binary, "start", name, "--update-env"], timeout=30)
         started[name] = result.returncode == 0
     return started
@@ -271,9 +274,8 @@ def load_env_file() -> tuple[bool, list[str]]:
             values[key.strip()] = value.strip().strip('"').strip("'")
     except OSError:
         return created, ["~/.nexo.env"]
-    for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL"):
-        if not values.get(key):
-            missing.append(key)
+    if not values.get("LLM_PROVIDER"):
+        missing.append("LLM_PROVIDER")
     for key, value in values.items():
         if value and key not in os.environ:
             os.environ[key] = value
@@ -382,7 +384,7 @@ def ready_mode(py: Path, hw: dict[str, object], manifest: Path, installed: bool,
     else:
         if not provider:
             failures.append("LLM_PROVIDER is not configured")
-        if provider and not os.getenv("LLM_API_KEY"):
+        if provider in {"openrouter", "openai", "anthropic"} and not os.getenv("LLM_API_KEY"):
             failures.append("LLM_API_KEY is not configured")
         if provider and not os.getenv("LLM_MODEL"):
             failures.append("LLM_MODEL is not configured")
@@ -390,7 +392,8 @@ def ready_mode(py: Path, hw: dict[str, object], manifest: Path, installed: bool,
     if pm2.get("processes", {}).get("nexo-backend") and not pm2_online("nexo-backend"):
         failures.append("PM2 nexo-backend is not online")
 
-    if not start_alex():
+    # Do not start ALEX until required infrastructure has passed validation.
+    if not failures and not start_alex():
         failures.append("ALEX runtime failed to start")
 
     data = build_state(hw, py, False, manifest, installed, llama, models, api, pm2, started,
