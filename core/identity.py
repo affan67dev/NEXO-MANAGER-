@@ -33,13 +33,20 @@ def resolve_telegram_identity(user_id: int | str | None) -> TelegramIdentity:
     return TelegramIdentity(telegram_user_id=telegram_user_id, role=role)
 
 
+def resolve_bot_identity(bot_role: BotRole, user_id: int | str | None) -> TelegramIdentity:
+    identity = resolve_telegram_identity(user_id)
+    if bot_role == "admin":
+        if not identity.is_admin:
+            raise PermissionError("unauthorized_admin_bot")
+        return identity
+    if bot_role == "public":
+        return TelegramIdentity(identity.telegram_user_id, "public_client")
+    raise ValueError("invalid_bot_role")
+
+
 def authorize_bot_update(bot_role: BotRole, user_id: int | str | None) -> bool:
     try:
-        identity = resolve_telegram_identity(user_id)
-    except ValueError:
+        resolve_bot_identity(bot_role, user_id)
+    except (PermissionError, ValueError):
         return False
-    if bot_role == "admin":
-        return identity.is_admin
-    if bot_role == "public":
-        return not identity.is_admin
-    raise ValueError("invalid_bot_role")
+    return True
