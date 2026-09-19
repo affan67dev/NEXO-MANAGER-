@@ -49,6 +49,11 @@ class StabilityTests(unittest.TestCase):
                 self.assertEqual(memory_engine.search_memory("private", user_id=2), [])
                 self.assertEqual(memory_engine.search_memory("private", user_id=1)[0][1], "private project alpha")
                 self.assertFalse(memory_engine.save_memory("secret", "api_key=abc123", user_id=1))
+                session_a = memory_engine.get_or_create_session(1)
+                self.assertTrue(memory_engine.save_turn(session_a, 1, "user", "alpha-private"))
+                self.assertEqual(memory_engine.recent_turns(session_a, user_id=2), [])
+                self.assertEqual(memory_engine.recent_turns(session_a, user_id=1)[0][1], "alpha-private")
+                self.assertFalse(memory_engine.save_turn(session_a, 2, "user", "cross-user-write"))
 
                 store = semantic_memory.SemanticMemory()
                 self.assertTrue(store.add("alpha only", user_id=1))
