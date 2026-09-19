@@ -11,7 +11,6 @@ from typing import Any, Callable, Optional
 from android_capabilities import toast_state
 from services.llm_provider import LLMConfig
 from core.alex_agent_loop import AlexAgentLoop, Decision
-from core.alex_agent_loop import AlexAgentLoop, Decision
 
 logger = logging.getLogger("nexo.alex.voice")
 
