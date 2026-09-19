@@ -9,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 from android_capabilities import toast_state
-from services.llm_provider import LLMConfig
+from services.llm_provider import LLMConfig\nfrom core.alex_agent_loop import AlexAgentLoop, Decision
 
 logger = logging.getLogger("nexo.alex.voice")
 
@@ -248,7 +248,7 @@ def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None
                     "error": f"hosted_execution_failed:{type(exc).__name__}",
                     "response": "I couldn't execute that task because the reasoning service failed."}
         requires = any(x["result"].get("requires_confirmation") for x in local)
-        verified = bool(local) and all(x["result"].get("verified") is True for x in local) and not requires
+        if phase_callback: phase_callback(VoiceState.VERIFYING)\n        verified = bool(local) and all(x["result"].get("verified") is True for x in local) and not requires
         return {"ok": verified, "verified": verified, "requires_confirmation": requires,
                 "response": answer, "tools": local}
 
