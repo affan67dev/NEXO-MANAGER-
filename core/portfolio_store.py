@@ -160,6 +160,30 @@ def upsert_knowledge(
         return int(cur.lastrowid or 0)
 
 
+def knowledge_version_exists(repository: str, version_sha: str, *, db_path: Path | str = DB) -> bool:
+    if not repository or not version_sha:
+        return False
+    ensure_schema(db_path)
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM knowledge_documents WHERE repository=? AND version_sha=? AND visibility='public' AND scope='public_portfolio' LIMIT 1",
+            (repository, version_sha),
+        ).fetchone()
+    return row is not None
+
+
+def prune_public_repository_versions(repository: str, keep_version_sha: str, *, db_path: Path | str = DB) -> int:
+    if not repository or not keep_version_sha:
+        return 0
+    ensure_schema(db_path)
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM knowledge_documents WHERE repository=? AND visibility='public' AND scope='public_portfolio' AND version_sha<>?",
+            (repository, keep_version_sha),
+        )
+        return int(cur.rowcount or 0)
+
+
 def retrieve_knowledge(
     query: str,
     *,
