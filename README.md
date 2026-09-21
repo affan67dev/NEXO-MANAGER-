@@ -127,7 +127,6 @@ Features marked as components/tools are not claims that every interface automati
 
 The bootstrap requires **Python 3.10 or newer**. CI currently uses Python 3.12.
 
-The repository does not enforce a particular CPU architecture. Actual model performance depends heavily on the hardware and GGUF model selected.
 
 ## Operating systems
 
@@ -198,7 +197,6 @@ Network access is required for operations that contact external services, includ
 - external APIs such as configured Tavily search
 - downloading Python packages during dependency installation
 
-Local llama-server inference itself can operate without internet access once the runtime, model, and Python dependencies are already available.
 
 ---
 
@@ -254,7 +252,6 @@ The setup engine:
 
 1. verifies Python 3.10+;
 2. detects OS, architecture, CPU count, RAM and available GPU information;
-3. detects an existing llama-server and GGUF model when present;
 4. verifies that `data/memory.db` can be opened;
 5. creates the desktop virtual environment at:
 
@@ -447,8 +444,6 @@ Do **not** replace or recreate the existing Android:
 - Telegram bot configuration
 - `~/.nexo.env`
 - SQLite database
-- GGUF model
-- llama-server configuration
 
 Do not point Android at a newly created desktop virtual environment.
 
@@ -475,7 +470,6 @@ Run bootstrap wrapper
 Detect repository + platform/hardware
        |
        v
-Detect existing llama-server / GGUF
        |
        v
 Verify SQLite can open
@@ -514,25 +508,20 @@ At runtime, `telegram_llama.py` performs load control, input inspection, securit
 NEXO's primary model interface is an OpenAI-compatible local HTTP endpoint configured with:
 
 ```text
-LLAMA_URL=http://127.0.0.1:8080/v1/chat/completions
 ```
 
 The repository's health check uses:
 
 ```text
-http://127.0.0.1:8080/health
 ```
 
 The application does not itself build llama.cpp or download the model. You must have a compatible local runtime/model available.
 
-## GGUF
 
-The model should be an existing `.gguf` file usable by the selected llama.cpp/llama-server runtime.
 
 You can explicitly configure its path with:
 
 ```text
-NEXO_MODEL_PATH=/path/to/model.gguf
 ```
 
 Use a real local path for your machine. Do not commit model files to Git; `.gitignore` excludes `*.gguf`.
@@ -544,9 +533,6 @@ Qwen is an **optional secondary endpoint**, not a mandatory second model.
 Configuration:
 
 ```text
-NEXO_QWEN_FALLBACK_ENABLED=false
-NEXO_QWEN_URL=
-NEXO_QWEN_COMPLEXITY_CHARS=3500
 ```
 
 When enabled and a different Qwen endpoint is configured:
@@ -725,10 +711,8 @@ External content and tool output are treated as untrusted data by the system ins
 
 # Health checks
 
-`core/health.py` checks the local llama-server health endpoint:
 
 ```text
-http://127.0.0.1:8080/health
 ```
 
 To run that module directly:
@@ -1053,7 +1037,6 @@ NEXO-MANAGER-/
 └── nexo_tools.py
 ```
 
-`data/memory.db`, GGUF models, logs, secrets and credentials are intentionally excluded from Git by `.gitignore`.
 
 The repository also contains additional application modules not shown in the simplified tree. Use the actual files as the source of truth when developing against a component.
 
@@ -1130,11 +1113,9 @@ Never commit:
 - authorization headers
 - private keys
 - local databases
-- GGUF model files
 - runtime logs
 - credentials
 
-The repository's `.gitignore` excludes common secret/runtime patterns including `.env`, database files, GGUF files, logs, secrets and credentials.
 
 Use `.nexo.env.example` only as a safe configuration template. Put real values in `~/.nexo.env`.
 
