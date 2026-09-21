@@ -175,28 +175,11 @@ pytesseract
 
 The bootstrap installs this manifest only when its SHA256 marker shows that the manifest has changed or has not been installed in the desktop setup environment.
 
-## Local LLM runtime
+## Hosted LLM runtime
 
-NEXO expects an **already-running OpenAI-compatible LLM HTTP endpoint**. The default Llama endpoint is:
+The active provider is OpenRouter. The runtime reads `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` from `~/.nexo.env`.
 
-```text
-http://127.0.0.1:8080/v1/chat/completions
-```
-
-The bootstrap does not detect, start, download, or load a local LLM server/model.
-
-It does **not** automatically download a GGUF model or build/install llama.cpp.
-
-## GGUF model
-
-The bootstrap looks for a configured `.gguf` file and, when appropriate, checks these locations:
-
-- `NEXO_MODEL_PATH`
-- `models/` inside the repository
-- `~/models`
-- `/sdcard/Download` on Termux
-
-The shared-storage scan on Termux is deliberately non-recursive to avoid expensive phone-wide storage scans.
+The configured `LLM_MODEL` is intentionally not hard-coded in this repository.
 
 ## RAM / disk
 
@@ -437,8 +420,7 @@ The repository does not provide a macOS launch daemon/service definition, so the
 - **Permission denied:** make `bootstrap.sh` executable with `chmod +x bootstrap.sh`.
 - **Python too old:** use Python 3.10+.
 - **Dependency failure:** check package installation output and network access.
-- **llama-server not detected:** configure/use an existing compatible `llama-server` installation; the bootstrap does not build it for you.
-- **Model not detected:** configure `NEXO_MODEL_PATH` to an existing `.gguf` file.
+- **Hosted LLM unavailable:** verify `LLM_PROVIDER=openrouter`, the configured hosted model, and network access to OpenRouter. The repository does not start a local model server.
 
 ---
 
@@ -600,17 +582,13 @@ These operations require network access when used:
 
 ## Offline
 
-After dependencies, model files, and local runtime components are already installed, the core local path can operate without internet:
+The active reasoning path is hosted:
 
 ```text
-User -> NEXO -> security -> local memory -> local LLM -> response
+User -> ALEX -> planner/router -> OpenRouter -> configured model -> response
 ```
 
-Telegram itself still needs internet because it communicates with Telegram's servers.
-
-GitHub auto-update, package installation, web search, and external API calls cannot operate normally offline.
-
-NEXO should therefore be described as **local-first**, not as a completely offline application.
+Telegram and other external integrations require network access. SQLite memory and other local application components can still operate without network access, but the LLM itself is not a local/offline dependency.
 
 ---
 
@@ -636,11 +614,6 @@ Never commit the real file.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot authentication | `<telegram-token>` |
 | `NEXO_OWNER_TELEGRAM_USER_ID` | Owner/privileged Telegram identity | `<telegram-user-id>` |
-| `LLAMA_URL` | Primary OpenAI-compatible LLM endpoint | `http://127.0.0.1:8080/v1/chat/completions` |
-| `NEXO_MODEL_PATH` | Optional explicit GGUF path for bootstrap detection | `/path/to/model.gguf` |
-| `NEXO_QWEN_FALLBACK_ENABLED` | Enables optional Qwen routing | `false` |
-| `NEXO_QWEN_URL` | Secondary Qwen endpoint | `<local-qwen-endpoint>` |
-| `NEXO_QWEN_COMPLEXITY_CHARS` | Complexity threshold | `3500` |
 | `TAVILY_API_KEY` | Tavily/web-search configuration | `<tavily-key>` |
 | `WHISPER_CPP_BIN` | Whisper CLI binary | `whisper-cli` |
 | `WHISPER_CPP_MODEL` | Whisper model path | `<whisper-model-path>` |
@@ -948,41 +921,9 @@ On desktop, dependency installation is skipped when the manifest's SHA256 matche
 
 On Termux, the desktop bootstrap deliberately does not create a second venv or reinstall the production runtime.
 
-## llama-server is unavailable
+## Hosted provider is unavailable
 
-The bootstrap only detects an existing server. It does not build one.
-
-Check the expected endpoint:
-
-```text
-http://127.0.0.1:8080/health
-```
-
-Then run:
-
-```bash
-python3 core/health.py
-```
-
-If the server is not available, fix the existing llama-server installation/configuration before changing NEXO application code.
-
-## Model not found
-
-Configure an existing GGUF explicitly:
-
-```text
-NEXO_MODEL_PATH=/path/to/model.gguf
-```
-
-The bootstrap only detects the file; it does not download it.
-
-## Qwen unavailable
-
-Qwen is optional. If it is disabled, NEXO stays on the primary Llama route.
-
-If enabled, verify that `NEXO_QWEN_URL` points to a separate already-running endpoint. If Qwen fails, the router can fall back to Llama.
-
-Do not enable a second large model on a low-memory Android device without testing its memory impact.
+Verify the configured OpenRouter environment and network access. No local LLM fallback is attempted.
 
 ## Telegram configuration error
 
@@ -992,9 +933,7 @@ Check that `~/.nexo.env` contains a valid local value. Never paste the real toke
 
 ## Port already in use
 
-The repository expects the default local LLM endpoint on port `8080`. Check which process is using that port using your operating system's normal process/network diagnostic tools, then reconcile the existing runtime configuration with `LLAMA_URL`.
-
-Do not kill unrelated services blindly.
+The active LLM endpoint is hosted through OpenRouter. If requests fail, verify the hosted configuration and network access rather than starting a local model server.
 
 ## SQLite/database problem
 
@@ -1205,9 +1144,10 @@ Use `.nexo.env.example` only as a safe configuration template. Put real values i
 
 The repository is intentionally conservative about what the bootstrap promises:
 
-- it detects an existing llama-server; it does not build/download it;
-- it detects existing GGUF files; it does not download models;
-- Qwen routing is optional and requires a separately running endpoint;
+- it does not build, download, start, or detect a local LLM;
+- OpenRouter is the active provider path;
+- no automatic local-model fallback exists;
+- future multi-model routing remains an inactive abstraction;
 - desktop bootstrap does not configure a desktop service manager;
 - Telegram requires internet access;
 - web search/external APIs require network access;
