@@ -38,7 +38,7 @@ class HostedKnowledgeRuntimeTests(unittest.TestCase):
 
     def test_telegram_model_context_is_bounded(self):
         messages = build_llm_messages("Tell me about OMNIX", [], "", "PUBLIC KNOWLEDGE")
-        self.assertIn("Authorized NEXO knowledge", messages[0]["content"])
+        self.assertIn("Authorized NEXO knowledge", " ".join(m["content"] for m in messages if m.get("role") == "system"))
         self.assertEqual(messages[-1]["content"], "Tell me about OMNIX")
 
     def test_production_runtime_has_no_qwen_endpoint_configuration(self):

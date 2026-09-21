@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
 try:
@@ -15,6 +16,9 @@ class NexoScheduler:
     def start(self, briefing_callback=None, maintenance_callback=None):
         if not self.scheduler:
             return False
+        import asyncio
+        asyncio.get_running_loop()
+        asyncio.get_running_loop()
         if briefing_callback:
             hour = int(os.getenv("NEXO_BRIEFING_HOUR", "9"))
             minute = int(os.getenv("NEXO_BRIEFING_MINUTE", "0"))
