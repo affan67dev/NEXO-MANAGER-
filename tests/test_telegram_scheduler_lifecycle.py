@@ -45,6 +45,12 @@ class TelegramStartupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await telegram_llama._post_shutdown(MagicMock())
             stop.assert_called_once_with()
 
+    def test_telegram_builder_keeps_scheduler_lifecycle_hooks(self):
+        import telegram_llama
+
+        self.assertTrue(callable(telegram_llama._post_init))
+        self.assertTrue(callable(telegram_llama._post_shutdown))
+
     def test_main_wires_scheduler_to_application_lifecycle(self):
         import telegram_llama
 
