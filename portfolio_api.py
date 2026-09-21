@@ -17,6 +17,7 @@ if ENV_FILE.exists():
 from core.portfolio_store import ensure_schema, new_session_id
 from core.request_context import RequestContext
 from services.portfolio_ai import portfolio_ai
+from services.public_knowledge_refresh import refresh_public_knowledge
 
 APP_NAME = "NEXO Portfolio AI API"
 COOKIE = "nexo_portfolio_session"
@@ -47,6 +48,12 @@ def _session(response: Response, cookie: str | None) -> str:
 @app.on_event("startup")
 def startup() -> None:
     ensure_schema()
+    if os.getenv("NEXO_PUBLIC_KNOWLEDGE_REFRESH_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            refresh_public_knowledge()
+        except Exception:
+            # Knowledge refresh must never prevent the public API from starting.
+            pass
 
 
 @app.get("/api/portfolio/session")
