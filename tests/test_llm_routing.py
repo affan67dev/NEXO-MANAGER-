@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from agents.manager.manager import NexoManager
 from agents.executive_planner import ExecutivePlanner, _clean_response_text
-from services.context_budget import fit_messages
+from services.context_budget import count_input_tokens, fit_messages
 from services.llm_router import LLMRouter
 
 
@@ -84,13 +84,38 @@ class LLMRoutingTests(unittest.TestCase):
         self.assertEqual(fitted[-1]["content"], messages[-1]["content"])
         self.assertNotIn("H" * 1800, [item.get("content") for item in fitted])
 
+    def test_short_user_message_reaches_provider(self):
+        provider = FakeProvider()
+        planner = ExecutivePlanner(provider)
+        answer = planner.run("What is 2+2?", [{"role": "system", "content": "Answer briefly."}, {"role": "user", "content": "What is 2+2?"}], [], lambda *a, **k: {}, owner=False)
+        self.assertEqual(answer, "answer")
+        self.assertEqual(provider.calls[0][0][-1]["content"], "What is 2+2?")
+
+    def test_old_history_is_discarded_before_current_request_is_rejected(self):
+        current = "What is 2+2?"
+        messages = [{"role": "system", "content": "security policy"}, {"role": "assistant", "content": "H" * 3000}, {"role": "user", "content": current}]
+        fitted = fit_messages(messages, budget=count_input_tokens([messages[0], messages[-1]]) + 1)
+        self.assertEqual(fitted[-1]["content"], current)
+        self.assertNotIn(messages[1], fitted)
+
+    def test_tool_schemas_are_included_in_budget_calculation(self):
+        messages = [{"role": "system", "content": "security policy"}, {"role": "user", "content": "do it"}]
+        tools = [{"type": "function", "function": {"name": "device_action", "description": "D" * 1000, "parameters": {"type": "object", "properties": {}}}}]
+        self.assertGreater(count_input_tokens(messages, tools), count_input_tokens(messages))
+
     def test_oversized_user_message_is_rejected_without_truncation(self):
         user_text = "U" * 5000
         messages = [{"role": "system", "content": "security policy"}, {"role": "user", "content": user_text}]
         with patch.dict(os.environ, {"LLM_CONTEXT_TOKENS": "512", "LLM_OUTPUT_TOKENS": "128"}, clear=False):
-            with self.assertRaisesRegex(RuntimeError, "context_budget_exceeded_user_message_too_large"):
+            with self.assertRaisesRegex(RuntimeError, "context_budget_insufficient"):
                 fit_messages(messages)
         self.assertEqual(messages[-1]["content"], user_text)
+
+    def test_empty_and_missing_user_messages_are_rejected_safely(self):
+        with self.assertRaisesRegex(RuntimeError, "context_budget_empty"):
+            fit_messages([])
+        with self.assertRaisesRegex(RuntimeError, "context_budget_missing_user"):
+            fit_messages([{"role": "system", "content": "NEXO"}])
 
     def test_portfolio_and_telegram_can_share_same_planner_type(self):
         provider = FakeProvider()
