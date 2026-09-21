@@ -70,7 +70,7 @@ def _public_text(content: str) -> str:
     lines: list[str] = []
     hidden_section = False
     for line in raw_lines:
-        if re.match(r"(?im)^#{1,6}\\s", line):
+        if re.match(r"(?im)^#{1,6}\s", line):
             hidden_section = bool(PRIVATE_SECTIONS.match(line))
         if hidden_section:
             continue
