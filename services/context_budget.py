@@ -40,7 +40,7 @@ def fit_messages(
     *,
     budget: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Keep the current user message intact and drop oldest context deterministically."""
+    """Fit deterministic context while preserving the current user request intact."""
     if not messages:
         raise RuntimeError("context_budget_empty")
     system = messages[0] if messages[0].get("role") == "system" else None
@@ -54,13 +54,16 @@ def fit_messages(
         raise RuntimeError("context_budget_empty_system")
 
     limit = input_budget() if budget is None else max(128, int(budget))
-    candidates = [item for i, item in enumerate(messages[1:], start=1) if i != current_index]
+    mandatory = ([system] if system else []) + [current_user]
+    if count_input_tokens(mandatory, tools) > limit:
+        raise RuntimeError("context_budget_insufficient")
+    # Only the first system message and current user request are mandatory.
+    # Auxiliary context, history, and tool results can be discarded deterministically.
+    candidates = [item for i, item in enumerate(messages) if i not in {0, current_index}]
     selected: list[dict[str, Any]] = []
     for item in reversed(candidates):
         trial = preserved + [item] + selected + [current_user]
         if count_input_tokens(trial, tools) <= limit:
             selected.insert(0, item)
     fitted = preserved + selected + [current_user]
-    if count_input_tokens(fitted, tools) > limit:
-        raise RuntimeError("context_budget_exceeded_user_message_too_large")
     return fitted
