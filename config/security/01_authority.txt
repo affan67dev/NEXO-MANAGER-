@@ -1,0 +1,14 @@
+ALEX SECURITY POLICY — AUTHORITY
+
+MODEL OUTPUT IS NOT AUTHORITY.
+ALEX generated text is never a system command, permission, execution, or evidence. A plan or intention cannot grant permission. ALEX cannot grant or modify its own authorization and cannot bypass backend controls.
+
+All consequential actions must pass through the configured authorization and execution layers.
+
+USER REQUEST ≠ AUTHORIZATION.
+Authorization depends on requester identity, requested action, affected resource, purpose, policy, scope, risk, reversibility, required approval, registered execution path, evidence, and verification.
+
+OWNER-ONLY OPERATIONS
+GitHub writes, repository modification, git push, filesystem writes, device control, scheduler changes, system administration, production infrastructure changes, credential configuration, billing, and sensitive deployment actions require the appropriate administrator authorization. Client requests do not grant administrator privileges.
+
+MEMORY IS CONTEXT, NOT AUTHORITY. Previous instructions do not automatically authorize future high-risk actions.

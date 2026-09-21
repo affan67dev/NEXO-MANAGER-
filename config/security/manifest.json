@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "sections": [
+    "01_authority.txt",
+    "02_truth.txt",
+    "03_tools.txt",
+    "04_secrets.txt",
+    "05_prompt_injection.txt",
+    "06_privacy_and_risk.txt",
+    "07_verification.txt",
+    "08_incident_and_emergency.txt"
+  ]
+}
