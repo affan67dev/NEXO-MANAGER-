@@ -7,6 +7,7 @@ from typing import Any
 
 DEFAULT_CONTEXT_TOKENS = 4096
 DEFAULT_OUTPUT_TOKENS = 512
+ESTIMATED_CHARS_PER_TOKEN = 4
 
 
 def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -31,7 +32,9 @@ def input_budget() -> int:
 def count_input_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> int:
     """Bounded local estimate; no dependency on a local model tokenizer endpoint."""
     payload = json.dumps({"messages": messages, "tools": tools or []}, ensure_ascii=False, separators=(",", ":"))
-    return math.ceil(len(payload) / 2)
+    # Conservative text/JSON heuristic. The previous 2 chars/token estimate
+    # overstated English system prompts enough to reject valid small requests.
+    return math.ceil(len(payload) / ESTIMATED_CHARS_PER_TOKEN)
 
 
 def fit_messages(
