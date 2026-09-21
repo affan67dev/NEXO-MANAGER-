@@ -58,14 +58,10 @@ def _clip(text: str, limit: int) -> str:
 
 
 def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "") -> list[dict[str, str]]:
-    # Keep the immutable core prompt separate from optional context so the
-    # context fitter can deterministically discard optional context first.
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
-    memory_value = _clip(memory_text, MAX_MEMORY_CHARS)
-    if memory_value:
-        messages.append({"role": "system", "content": "Relevant user memory:\n" + memory_value})
+    system = SYSTEM
+    system += "\n\nRelevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
     if knowledge_text:
-        messages.append({"role": "system", "content": "Authorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)})
+        system += "\n\nAuthorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)
     selected: list[tuple[str, str]] = []
     used = 0
     for role, content in reversed(turns):
@@ -76,6 +72,7 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
         selected.append(item)
         used += cost
     selected.reverse()
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend({"role": role, "content": content} for role, content in selected)
     messages.append({"role": "user", "content": goal})
     return messages
@@ -220,8 +217,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except RuntimeError as exc:
         logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
-        if str(exc).startswith("context_budget_insufficient"):
-            await update.message.reply_text("That request is too large for NEXO's configured context budget. Please send a shorter request.")
+        if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
+            await update.message.reply_text("That message is too large for NEXO's current context budget. Please send a shorter request.")
         else:
             await update.message.reply_text(_safe_failure_message())
     except Exception:
@@ -230,7 +227,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         typing_task.cancel()
         await load_guard.release()
-
 
 async def _post_init(application: Application) -> None:
     del application
