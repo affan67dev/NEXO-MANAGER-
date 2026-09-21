@@ -25,6 +25,9 @@ DEFAULT_REPOSITORIES = (
 )
 DEFAULT_TIMEOUT = 10.0
 MAX_README_CHARS = 50000
+PRIVATE_SECTIONS = re.compile(
+    r"(?im)^#{1,6}\s*(configuration|troubleshooting|safe deployment|auto-update|directory structure|security and data hygiene|platform isolation|contributing and code changes|model setup)\s*$"
+)
 CHUNK_CHARS = 5000
 CHUNK_OVERLAP = 400
 
@@ -63,7 +66,16 @@ def _now() -> str:
 
 
 def _public_text(content: str) -> str:
-    lines = [line for line in str(content or "").splitlines() if not SENSITIVE_LINE.search(line)]
+    raw_lines = str(content or "").splitlines()
+    lines: list[str] = []
+    hidden_section = False
+    for line in raw_lines:
+        if re.match(r"(?im)^#{1,6}\\s", line):
+            hidden_section = bool(PRIVATE_SECTIONS.match(line))
+        if hidden_section:
+            continue
+        if not SENSITIVE_LINE.search(line):
+            lines.append(line)
     value = "\n".join(lines).strip()
     if len(value) > MAX_README_CHARS:
         value = value[:MAX_README_CHARS].rsplit("\n", 1)[0]
