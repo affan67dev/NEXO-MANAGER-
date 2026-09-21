@@ -61,9 +61,12 @@ def fit_messages(
     # Auxiliary context, history, and tool results can be discarded deterministically.
     candidates = [item for i, item in enumerate(messages) if i not in {0, current_index}]
     selected: list[dict[str, Any]] = []
-    for item in reversed(candidates):
-        trial = preserved + [item] + selected + [current_user]
+    # Callers order optional context by priority. Preserve that order while fitting:
+    # recent/relevant conversation -> memory -> authorized knowledge -> older context.
+    # The current request and core system prompt are never candidates for dropping.
+    for item in candidates:
+        trial = preserved + selected + [item, current_user]
         if count_input_tokens(trial, tools) <= limit:
-            selected.insert(0, item)
+            selected.append(item)
     fitted = preserved + selected + [current_user]
     return fitted
