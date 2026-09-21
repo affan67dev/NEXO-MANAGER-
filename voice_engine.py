@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from android_capabilities import toast_state
 from services.llm_provider import LLMConfig
+from core.alex_agent_loop import AlexAgentLoop, Decision
 
 logger = logging.getLogger("nexo.alex.voice")
 
@@ -36,8 +37,15 @@ class VoiceState(str, Enum):
     IDLE = "IDLE"
     WAKE_DETECTED = "WAKE_DETECTED"
     LISTENING = "LISTENING"
-    PROCESSING = "PROCESSING"
+    UNDERSTANDING = "UNDERSTANDING"
+    ANALYSING = "ANALYSING"
+    DECIDING = "DECIDING"
+    PLANNING = "PLANNING"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    EXECUTING = "EXECUTING"
+    VERIFYING = "VERIFYING"
     SPEAKING = "SPEAKING"
+    ERROR = "ERROR"
 
 @dataclass
 class VoiceResult:
@@ -204,8 +212,17 @@ def _fallback_plan(text: str) -> list[dict[str, Any]]:
     return result
 
 def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None = None,
-                     confirmation: bool = False, planner: ExecutivePlanner | None = None) -> dict[str, Any]:
+                     confirmation: bool = False, planner: ExecutivePlanner | None = None,
+                     phase_callback: Callable[[VoiceState], None] | None = None) -> dict[str, Any]:
     _load_runtime_env()
+    if phase_callback: phase_callback(VoiceState.UNDERSTANDING)
+    preliminary = AlexAgentLoop().inspect(text, user_id=user_id, owner_id=None if owner else -1)
+    if preliminary.decision is Decision.CLARIFICATION:
+        return {"ok": False, "verified": False, "response": preliminary.reason, "stage": "analysis", "decision": preliminary.decision.value}
+    if preliminary.decision is Decision.CONFIRMATION and not confirmation:
+        if phase_callback: phase_callback(VoiceState.AWAITING_CONFIRMATION)
+        return {"ok": False, "verified": False, "requires_confirmation": True, "response": "I need your explicit confirmation before I do that.", "stage": "confirmation", "decision": preliminary.decision.value}
+    if phase_callback: phase_callback(VoiceState.ANALYSING)
     manager_task = create_task(text)
     if planner is None:
         try:
@@ -216,7 +233,9 @@ def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None
                     "response": "ALEX reasoning is not configured. Set LLM_PROVIDER, LLM_API_KEY and LLM_MODEL in ~/.nexo.env.",
                     "error": str(exc), "stage": "llm_configuration"}
     request_id = f"req-{uuid.uuid4().hex[:12]}"
+    if phase_callback: phase_callback(VoiceState.DECIDING)
     try:
+        if phase_callback: phase_callback(VoiceState.PLANNING)
         plan = planner.plan_tasks(text, context=[{"intent": manager_task.intent, "agent": manager_task.agent}])
     except Exception:
         plan = []
@@ -231,6 +250,7 @@ def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None
     observed = []
 
     def execute_task(task: TaskSpec) -> dict[str, Any]:
+        if phase_callback: phase_callback(VoiceState.EXECUTING)
         local = []
         def executor(name, args, **kw):
             result = _execute_voice_tool(name, args, owner=owner, user_id=user_id, confirmation=confirmation)
@@ -248,6 +268,8 @@ def execute_via_nexo(text: str, *, owner: bool = True, user_id: int | str | None
                     "error": f"hosted_execution_failed:{type(exc).__name__}",
                     "response": "I couldn't execute that task because the reasoning service failed."}
         requires = any(x["result"].get("requires_confirmation") for x in local)
+        if phase_callback: phase_callback(VoiceState.VERIFYING)
+        if phase_callback: phase_callback(VoiceState.VERIFYING)
         verified = bool(local) and all(x["result"].get("verified") is True for x in local) and not requires
         return {"ok": verified, "verified": verified, "requires_confirmation": requires,
                 "response": answer, "tools": local}
@@ -306,9 +328,8 @@ class NexoVoiceAssistant:
             return VoiceResult(True, response=response, stage="wake", provider="text",
                                verified=spoken, details={"tts_verified": spoken, "command_discarded": command_discarded},
                                state=self.state.value)
-        self._set_state(VoiceState.PROCESSING)
         self.last_interaction = time.monotonic()
-        outcome = execute_via_nexo(text, owner=owner, user_id=user_id, confirmation=confirmation, planner=planner)
+        outcome = execute_via_nexo(text, owner=owner, user_id=user_id, confirmation=confirmation, planner=planner, phase_callback=self._set_state)
         response = str(outcome.get("response") or "")
         self._set_state(VoiceState.SPEAKING)
         spoken = self.tts(response)
