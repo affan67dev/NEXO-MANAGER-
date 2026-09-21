@@ -56,7 +56,9 @@ def fit_messages(
     if system is not None and not str(system.get("content") or "").strip():
         raise RuntimeError("context_budget_empty_system")
 
-    limit = input_budget() if budget is None else max(128, int(budget))
+    limit = input_budget() if budget is None else int(budget)
+    if limit <= 0:
+        raise RuntimeError("context_budget_invalid_limit")
     mandatory = ([system] if system else []) + [current_user]
     if count_input_tokens(mandatory, tools) > limit:
         raise RuntimeError("context_budget_insufficient")
