@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # One-time NEXO Termux deployment bootstrap.
 # It configures a lightweight 30-minute poller and records the current runtime
-# as the initial known-good release. It never manages omnix-backend.
+# as the initial known-good release. It never manages omnix-backend or starts a local LLM.
 
 REPO_DIR="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 STATE_DIR="${HOME}/.nexo/deploy"
@@ -23,7 +23,6 @@ command -v crontab >/dev/null 2>&1 || fail "cronie/crontab is required"
 [[ -d "$REPO_DIR/.git" ]] || fail "NEXO repository root not found"
 [[ "$(git -C "$REPO_DIR" config --get remote.origin.url || true)" == *"affan67dev/NEXO-MANAGER-"* ]] || fail "unexpected Git remote"
 [[ -f "$REPO_DIR/scripts/auto_update.sh" ]] || fail "auto_update.sh missing"
-[[ -f "$HOME/NEXO/start_llama_tablet.sh" ]] || fail "~/NEXO/start_llama_tablet.sh missing"
 [[ -f "$HOME/NEXO/start_nexo_tablet.sh" ]] || fail "~/NEXO/start_nexo_tablet.sh missing"
 
 pm2 describe nexo-backend >/dev/null 2>&1 || fail "PM2 process nexo-backend not found"
