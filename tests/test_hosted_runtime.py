@@ -41,6 +41,24 @@ class HostedKnowledgeRuntimeTests(unittest.TestCase):
         self.assertIn("Authorized NEXO knowledge", " ".join(m["content"] for m in messages if m.get("role") == "system"))
         self.assertEqual(messages[-1]["content"], "Tell me about OMNIX")
 
+    def test_active_runtime_declares_hosted_openrouter_path(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = (root / "config" / "settings.json").read_text(encoding="utf-8")
+        provider = (root / "services" / "llm_provider.py").read_text(encoding="utf-8")
+        telegram = (root / "telegram_llama.py").read_text(encoding="utf-8")
+        self.assertIn('"model_backend": "hosted"', settings)
+        self.assertIn('"llm_provider": "openrouter"', settings)
+        self.assertIn('if provider != "openrouter":', provider)
+        self.assertIn('.post_init(_post_init)', telegram)
+        self.assertIn('.post_shutdown(_post_shutdown)', telegram)
+
+    def test_active_runtime_has_no_local_llm_launch_path(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative in ("telegram_llama.py", "services/llm_provider.py", "services/llm_router.py", "agents/executive_planner.py", "scripts/bootstrap_nexo.py"):
+            source = (root / relative).read_text(encoding="utf-8")
+            for forbidden in ("llama-server", "LLAMA_SERVER", "NEXO_MODEL_PATH", "NEXO_QWEN_URL", "127.0.0.1:8080"):
+                self.assertNotIn(forbidden, source, f"{relative}: {forbidden}")
+
     def test_production_runtime_has_no_qwen_endpoint_configuration(self):
         root = Path(__file__).resolve().parents[1]
         for relative in ("agents/executive_planner.py", "services/llm_router.py", "services/context_budget.py", "services/portfolio_ai.py", "telegram_llama.py", "voice_engine.py"):
