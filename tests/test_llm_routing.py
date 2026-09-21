@@ -98,6 +98,21 @@ class LLMRoutingTests(unittest.TestCase):
         self.assertEqual(fitted[-1]["content"], current)
         self.assertNotIn(messages[1], fitted)
 
+    def test_optional_context_is_selected_in_priority_order(self):
+        messages = [
+            {"role": "system", "content": "core"},
+            {"role": "assistant", "content": "recent conversation"},
+            {"role": "system", "content": "relevant memory"},
+            {"role": "system", "content": "authorized knowledge"},
+            {"role": "user", "content": "current request"},
+        ]
+        budget = count_input_tokens([messages[0], messages[1], messages[-1]]) + 1
+        fitted = fit_messages(messages, budget=budget)
+        self.assertEqual(fitted[1]["content"], "recent conversation")
+        self.assertNotIn("relevant memory", [m["content"] for m in fitted])
+        self.assertNotIn("authorized knowledge", [m["content"] for m in fitted])
+        self.assertEqual(fitted[-1]["content"], "current request")
+
     def test_tool_schemas_are_included_in_budget_calculation(self):
         messages = [{"role": "system", "content": "security policy"}, {"role": "user", "content": "do it"}]
         tools = [{"type": "function", "function": {"name": "device_action", "description": "D" * 1000, "parameters": {"type": "object", "properties": {}}}}]
