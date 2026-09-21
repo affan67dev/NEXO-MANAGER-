@@ -45,6 +45,22 @@ class TelegramStartupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await telegram_llama._post_shutdown(MagicMock())
             stop.assert_called_once_with()
 
+    def test_telegram_optional_context_is_separate_from_core_system_prompt(self):
+        import telegram_llama
+
+        with patch.object(telegram_llama, "SYSTEM", "CORE"):
+            messages = telegram_llama.build_llm_messages(
+                "What is 2+2?",
+                [("assistant", "old answer")],
+                "memory",
+                "knowledge",
+            )
+        self.assertEqual(messages[0], {"role": "system", "content": "CORE"})
+        self.assertEqual(messages[1]["role"], "system")
+        self.assertIn("memory", messages[1]["content"])
+        self.assertIn("knowledge", messages[2]["content"])
+        self.assertEqual(messages[-1], {"role": "user", "content": "What is 2+2?"})
+
     def test_telegram_builder_keeps_scheduler_lifecycle_hooks(self):
         import telegram_llama
 
