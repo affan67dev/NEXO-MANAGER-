@@ -7,6 +7,7 @@ from typing import Any
 
 DEFAULT_CONTEXT_TOKENS = 4096
 DEFAULT_OUTPUT_TOKENS = 512
+ESTIMATED_CHARS_PER_TOKEN = 4
 
 
 def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -31,7 +32,9 @@ def input_budget() -> int:
 def count_input_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> int:
     """Bounded local estimate; no dependency on a local model tokenizer endpoint."""
     payload = json.dumps({"messages": messages, "tools": tools or []}, ensure_ascii=False, separators=(",", ":"))
-    return math.ceil(len(payload) / 2)
+    # Conservative text/JSON heuristic. The previous 2 chars/token estimate
+    # overstated English system prompts enough to reject valid small requests.
+    return math.ceil(len(payload) / ESTIMATED_CHARS_PER_TOKEN)
 
 
 def fit_messages(
@@ -61,9 +64,12 @@ def fit_messages(
     # Auxiliary context, history, and tool results can be discarded deterministically.
     candidates = [item for i, item in enumerate(messages) if i not in {0, current_index}]
     selected: list[dict[str, Any]] = []
-    for item in reversed(candidates):
-        trial = preserved + [item] + selected + [current_user]
+    # Callers order optional context by priority. Preserve that order while fitting:
+    # recent/relevant conversation -> memory -> authorized knowledge -> older context.
+    # The current request and core system prompt are never candidates for dropping.
+    for item in candidates:
+        trial = preserved + selected + [item, current_user]
         if count_input_tokens(trial, tools) <= limit:
-            selected.insert(0, item)
+            selected.append(item)
     fitted = preserved + selected + [current_user]
     return fitted

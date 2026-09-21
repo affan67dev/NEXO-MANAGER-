@@ -73,6 +73,11 @@ class LLMRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "empty_model_response"):
             planner.run("Explain this", [{"role": "system", "content": "NEXO"}, {"role": "user", "content": "Explain this"}], [], lambda *a, **k: {}, owner=True)
 
+    def test_system_prompt_estimate_does_not_double_count_text_tokens(self):
+        messages = [{"role": "system", "content": "S" * 12000}, {"role": "user", "content": "What is 2+2?"}]
+        with patch.dict(os.environ, {"LLM_CONTEXT_TOKENS": "4096", "LLM_OUTPUT_TOKENS": "512"}, clear=False):
+            self.assertLess(count_input_tokens(messages), 3584)
+
     def test_context_budget_is_local_and_bounded(self):
         messages = [
             {"role": "system", "content": "security policy"},
@@ -97,6 +102,21 @@ class LLMRoutingTests(unittest.TestCase):
         fitted = fit_messages(messages, budget=count_input_tokens([messages[0], messages[-1]]) + 1)
         self.assertEqual(fitted[-1]["content"], current)
         self.assertNotIn(messages[1], fitted)
+
+    def test_optional_context_is_selected_in_priority_order(self):
+        messages = [
+            {"role": "system", "content": "core"},
+            {"role": "assistant", "content": "recent conversation"},
+            {"role": "system", "content": "relevant memory"},
+            {"role": "system", "content": "authorized knowledge"},
+            {"role": "user", "content": "current request"},
+        ]
+        budget = count_input_tokens([messages[0], messages[1], messages[-1]]) + 1
+        fitted = fit_messages(messages, budget=budget)
+        self.assertEqual(fitted[1]["content"], "recent conversation")
+        self.assertNotIn("relevant memory", [m["content"] for m in fitted])
+        self.assertNotIn("authorized knowledge", [m["content"] for m in fitted])
+        self.assertEqual(fitted[-1]["content"], "current request")
 
     def test_tool_schemas_are_included_in_budget_calculation(self):
         messages = [{"role": "system", "content": "security policy"}, {"role": "user", "content": "do it"}]

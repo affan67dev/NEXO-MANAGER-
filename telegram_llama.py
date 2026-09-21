@@ -44,6 +44,10 @@ MAX_MEMORY_CHARS = 600
 MAX_KNOWLEDGE_CHARS = 6000
 MAX_TURNS_CHARS = 900
 MAX_TURN_CHARS = 300
+MAX_HISTORY_TURNS = 4
+_CONTEXT_REFERENCES = ("this", "that", "it", "previous", "earlier", "before", "above", "continue", "again", "same", "we discussed", "you said", "as mentioned", "as discussed")
+_MEMORY_HINTS = ("remember", "memory", "my name", "my preference", "my preferences", "my project", "my goal", "i told you", "you remember")
+_KNOWLEDGE_HINTS = ("about", "repository", "repo", "project", "portfolio", "documentation", "docs", "codebase", "website", "file", "architecture", "readme", "github", "nexo", "alex")
 MAX_UPDATE_QUEUE = 20
 FAST_PATH_MESSAGES = {"hi", "hello", "hey", "hiya", "thanks", "thank you", "ok", "okay"}
 app: Application | None = None
@@ -57,23 +61,39 @@ def _clip(text: str, limit: int) -> str:
     return (text or "")[:limit]
 
 
-def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "") -> list[dict[str, str]]:
-    system = SYSTEM
-    system += "\n\nRelevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
-    if knowledge_text:
-        system += "\n\nAuthorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)
-    selected: list[tuple[str, str]] = []
-    used = 0
-    for role, content in reversed(turns):
-        item = (role, _clip(content, MAX_TURN_CHARS))
-        cost = len(item[1])
-        if used + cost > MAX_TURNS_CHARS:
-            continue
-        selected.append(item)
-        used += cost
-    selected.reverse()
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-    messages.extend({"role": role, "content": content} for role, content in selected)
+def _needs_history(goal: str) -> bool:
+    text = (goal or "").casefold()
+    return any(hint in text for hint in _CONTEXT_REFERENCES)
+
+
+def _needs_memory(goal: str) -> bool:
+    text = (goal or "").casefold()
+    return any(hint in text for hint in _MEMORY_HINTS)
+
+
+def _needs_knowledge(goal: str, intent: str | None = None) -> bool:
+    text = (goal or "").casefold()
+    return intent in {"coding", "research", "project", "portfolio"} or any(hint in text for hint in _KNOWLEDGE_HINTS)
+
+
+def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "", *, include_history: bool = True, include_memory: bool = True, include_knowledge: bool = True) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+    if include_history and turns:
+        selected: list[tuple[str, str]] = []
+        used = 0
+        for role, content in reversed(turns[-MAX_HISTORY_TURNS:]):
+            item = (role, _clip(content, MAX_TURN_CHARS))
+            cost = len(item[1])
+            if used + cost > MAX_TURNS_CHARS:
+                continue
+            selected.append(item)
+            used += cost
+        selected.reverse()
+        messages.extend({"role": role, "content": content} for role, content in selected)
+    if include_memory and memory_text.strip():
+        messages.append({"role": "system", "content": "Relevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)})
+    if include_knowledge and knowledge_text.strip():
+        messages.append({"role": "system", "content": "Authorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)})
     messages.append({"role": "user", "content": goal})
     return messages
 
@@ -200,13 +220,18 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I can't process that request in the current NEXO scope.")
             return
         session_id = get_or_create_session(user.id)
-        turns = recent_turns(session_id, limit=8)
-        memories = memory.search(text, limit=4, user_id=user.id)
-        memory_text = "\n".join(x["content"] for x in memories) or "(none)"
-        knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5)
+        wants_history = _needs_history(text)
+        wants_memory = _needs_memory(text)
+        wants_knowledge = _needs_knowledge(text, manager_task.intent)
+
+        turns = recent_turns(session_id, limit=MAX_HISTORY_TURNS) if wants_history else []
+        memories = memory.search(text, limit=4, user_id=user.id) if wants_memory else []
+        memory_text = "\n".join(x["content"] for x in memories)
+        knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5) if wants_knowledge else []
         knowledge_text = _knowledge_text(knowledge)
-        messages = build_llm_messages(text, turns, memory_text, knowledge_text)
+        messages = build_llm_messages(text, turns, memory_text, knowledge_text, include_history=wants_history, include_memory=wants_memory, include_knowledge=wants_knowledge)
         tool_set = [] if manager_task.intent == "conversation" else schemas()
+        logger.info("context_selection user_id=%s intent=%s history=%s memory=%s knowledge=%s history_candidates=%d", user.id, manager_task.intent, wants_history, wants_memory, wants_knowledge, len(turns))
         planner = planner or ExecutivePlanner()
         answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=request_context.actor_type == "owner", user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
         answer = answer.strip()
@@ -217,7 +242,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except RuntimeError as exc:
         logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
-        if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
+        if str(exc).startswith(("context_budget_exceeded_user_message_too_large", "context_budget_insufficient")):
             await update.message.reply_text("That message is too large for NEXO's current context budget. Please send a shorter request.")
         else:
             await update.message.reply_text(_safe_failure_message())
