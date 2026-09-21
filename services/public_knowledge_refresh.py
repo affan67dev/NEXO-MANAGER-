@@ -197,7 +197,11 @@ class PublicKnowledgeRefresher:
                         "status": "error",
                         "error": exc.__class__.__name__,
                     })
-            portfolio_url = _portfolio_url()
+            try:
+                portfolio_url = _portfolio_url()
+            except ValueError as exc:
+                results.append({"repository": "public_portfolio_website", "status": "error", "error": exc.__class__.__name__})
+                portfolio_url = ""
             if portfolio_url:
                 try:
                     response = self.client.get(portfolio_url)
@@ -207,7 +211,7 @@ class PublicKnowledgeRefresher:
                     portfolio_text = _extract_public_portfolio(response.text)
                     version_sha = hashlib.sha256(portfolio_text.encode("utf-8")).hexdigest()
                     repository_key = "public_portfolio_website"
-                    if portfolio_text and (force or not knowledge_version_exists(repository_key, version_sha)):
+                    if portfolio_text and (force or not knowledge_version_exists(repository_key, version_sha, db_path=self.db_path)):
                         for index, chunk in enumerate(_chunks(portfolio_text), start=1):
                             upsert_knowledge(
                                 source="public_portfolio",
@@ -224,8 +228,9 @@ class PublicKnowledgeRefresher:
                                 content_hash=hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
                                 last_ingested_at=_now(),
                                 indexed=True,
+                                db_path=self.db_path,
                             )
-                        prune_public_repository_versions(repository_key, version_sha)
+                        prune_public_repository_versions(repository_key, version_sha, db_path=self.db_path)
                         results.append({"repository": repository_key, "status": "refreshed", "version_sha": version_sha})
                     elif portfolio_text:
                         results.append({"repository": repository_key, "status": "unchanged", "version_sha": version_sha})
