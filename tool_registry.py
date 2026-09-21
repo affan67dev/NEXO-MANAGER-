@@ -30,7 +30,7 @@ def get(name: str) -> Tool | None:
     return _REGISTRY.get(name)
 
 
-def schemas() -> list[dict[str, Any]]:
+def schemas(*, include_owner_only: bool = True) -> list[dict[str, Any]]:
     return [
         {
             "type": "function",
@@ -41,6 +41,7 @@ def schemas() -> list[dict[str, Any]]:
             },
         }
         for t in _REGISTRY.values()
+        if include_owner_only or not t.owner_only
     ]
 
 
