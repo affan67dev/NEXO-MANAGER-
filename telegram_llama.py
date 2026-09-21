@@ -229,14 +229,33 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await load_guard.release()
 
 
+async def _post_init(application: Application) -> None:
+    del application
+    scheduler.start(daily_briefing, daily_maintenance)
+    logger.info("NEXO Telegram scheduler started")
+
+
+async def _post_shutdown(application: Application) -> None:
+    del application
+    scheduler.stop()
+    logger.info("NEXO Telegram scheduler stopped")
+
+
 def main() -> None:
     global app
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    app = (Application.builder().token(TOKEN).concurrent_updates(False).update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE)).build())
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .concurrent_updates(False)
+        .update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE))
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-    scheduler.start(daily_briefing, daily_maintenance)
     logger.info("NEXO unified Telegram runtime starting with hosted LLM provider")
     app.run_polling(drop_pending_updates=True)
 
