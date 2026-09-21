@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 Channel = Literal["portfolio_web", "telegram"]
-ActorType = Literal["visitor", "telegram_user", "owner"]
+ActorType = Literal["visitor", "public_client", "admin"]
 Scope = Literal["public_portfolio", "telegram_public", "owner_admin"]
 
 
@@ -21,8 +21,10 @@ class RequestContext:
         return cls("portfolio_web", "visitor", "public_portfolio", None, session_id)
 
     @classmethod
-    def telegram(cls, user_id: int | str, owner: bool) -> "RequestContext":
+    def telegram(cls, user_id: int | str, role: str) -> "RequestContext":
         uid = str(user_id)
-        if owner:
-            return cls("telegram", "owner", "owner_admin", uid, None)
-        return cls("telegram", "telegram_user", "telegram_public", uid, None)
+        if role == "admin":
+            return cls("telegram", "admin", "owner_admin", uid, None)
+        if role == "public_client":
+            return cls("telegram", "public_client", "telegram_public", uid, None)
+        raise ValueError("invalid_telegram_role")
