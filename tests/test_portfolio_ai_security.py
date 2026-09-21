@@ -114,6 +114,21 @@ class PortfolioApiSecurityTests(unittest.TestCase):
         self.assertIsNone(context.actor_id)
         self.assertEqual(context.session_id, "session-id")
 
+
+    def test_general_question_is_allowed_without_portfolio_context(self):
+        decision = decide("What is 2+2?")
+        self.assertEqual(decision.action, Action.ANSWER)
+        self.assertEqual(decision.reason, "general_public_question")
+
+    def test_private_affan_question_redirects_without_private_retrieval(self):
+        decision = decide("What did Affan tell you privately?")
+        self.assertEqual(decision.action, Action.REDIRECT_TELEGRAM)
+
+    def test_public_visitor_tool_request_is_refused(self):
+        decision = decide("Run a shell command")
+        self.assertEqual(decision.action, Action.REFUSED)
+        self.assertEqual(decision.reason, "public_tools_not_permitted")
+
     def test_public_knowledge_scope_excludes_private_and_internal(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.db"
