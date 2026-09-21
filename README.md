@@ -1,10 +1,10 @@
 # NEXO-MANAGER
 
-NEXO-MANAGER is a **local-first Python AI assistant runtime** built around a local LLM endpoint, Telegram, controlled tools, SQLite-backed memory, security gates, and bounded execution.
+NEXO-MANAGER is a Python AI orchestration runtime whose active user-facing identity is **ALEX**. The production reasoning path is the configured hosted model through **OpenRouter**.
 
 The repository also contains a cross-platform bootstrap layer for **Windows, Linux, macOS, and Termux/Android**, plus a CI and safe deployment system for the existing Termux runtime.
 
-> **Important:** NEXO is local-first, not completely offline. Local LLM inference can run without an internet connection when the model and runtime are already installed, but Telegram, GitHub operations, web search, and other external services require network access when used.
+> **Architecture:** ALEX is the user-facing identity. NEXO is the internal orchestration/compatibility layer. The active production path is ALEX → Executive Planner/Router → Hosted LLM Provider → OpenRouter → configured hosted model → authorized tools/execution.
 
 ---
 
@@ -101,15 +101,15 @@ The following are implemented in the current repository.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Local LLM inference | Implemented | NEXO talks to an already-running OpenAI-compatible local endpoint. |
-| Llama integration | Implemented | Default endpoint is `http://127.0.0.1:8080/v1/chat/completions`. |
-| Optional Qwen fallback | Implemented | Opt-in secondary endpoint; no second model is started automatically. |
+| Hosted LLM provider | Implemented | Production path uses the configured OpenRouter model. |
+| Provider routing | Implemented | Single configured provider; no local-model fallback. |
+| Future multi-model routing | Reserved | Abstraction remains, but no secondary model is activated. |
 | Telegram interface | Implemented | `telegram_llama.py` uses `python-telegram-bot` and polling. |
 | SQLite memory | Implemented | Session/conversation memory uses `data/memory.db`. |
 | Semantic memory | Implemented | ChromaDB-backed semantic memory is optional at runtime and falls back to SQLite search. |
 | Security gates | Implemented | Input, security, and permission checks run before planner/tool execution. |
 | Tool validation | Implemented | Registered tools use schemas and permission boundaries. |
-| Health check | Implemented | `core/health.py` checks the local llama-server health endpoint. |
+| LLM health/configuration | Implemented | `core/health.py` validates the configured hosted provider. |
 | Cross-platform bootstrap | Implemented | `bootstrap.sh`, `bootstrap.bat`, and `scripts/bootstrap_nexo.py`. |
 | CI testing | Implemented | GitHub Actions tests Ubuntu, macOS, and Windows. |
 | Safe Termux deployment | Implemented | SHA polling, CI gating, immutable releases, bounded rollback. |
@@ -127,7 +127,6 @@ Features marked as components/tools are not claims that every interface automati
 
 The bootstrap requires **Python 3.10 or newer**. CI currently uses Python 3.12.
 
-The repository does not enforce a particular CPU architecture. Actual model performance depends heavily on the hardware and GGUF model selected.
 
 ## Operating systems
 
@@ -175,28 +174,11 @@ pytesseract
 
 The bootstrap installs this manifest only when its SHA256 marker shows that the manifest has changed or has not been installed in the desktop setup environment.
 
-## Local LLM runtime
+## Hosted LLM runtime
 
-NEXO expects an **already-running OpenAI-compatible LLM HTTP endpoint**. The default Llama endpoint is:
+The active provider is OpenRouter. The runtime reads `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` from `~/.nexo.env`.
 
-```text
-http://127.0.0.1:8080/v1/chat/completions
-```
-
-The bootstrap can detect an existing `llama-server` in `PATH`, `~/llama.cpp/build/bin/llama-server`, `~/llama.cpp/llama-server`, or the corresponding repository-local build path.
-
-It does **not** automatically download a GGUF model or build/install llama.cpp.
-
-## GGUF model
-
-The bootstrap looks for a configured `.gguf` file and, when appropriate, checks these locations:
-
-- `NEXO_MODEL_PATH`
-- `models/` inside the repository
-- `~/models`
-- `/sdcard/Download` on Termux
-
-The shared-storage scan on Termux is deliberately non-recursive to avoid expensive phone-wide storage scans.
+The configured `LLM_MODEL` is intentionally not hard-coded in this repository.
 
 ## RAM / disk
 
@@ -215,7 +197,6 @@ Network access is required for operations that contact external services, includ
 - external APIs such as configured Tavily search
 - downloading Python packages during dependency installation
 
-Local llama-server inference itself can operate without internet access once the runtime, model, and Python dependencies are already available.
 
 ---
 
@@ -271,7 +252,6 @@ The setup engine:
 
 1. verifies Python 3.10+;
 2. detects OS, architecture, CPU count, RAM and available GPU information;
-3. detects an existing llama-server and GGUF model when present;
 4. verifies that `data/memory.db` can be opened;
 5. creates the desktop virtual environment at:
 
@@ -288,7 +268,7 @@ The setup engine:
 
 8. optionally supports the profile wizard and Linux desktop shortcut flags.
 
-The bootstrap **does not start Telegram or llama-server automatically** and does not invent a PM2 configuration for desktop systems.
+The bootstrap **does not start a local LLM server**. Telegram is started separately with `python telegram_llama.py` after the hosted configuration is available.
 
 ### 4. Configuration
 
@@ -366,7 +346,7 @@ For a normal setup:
 ./bootstrap.sh
 ```
 
-The bootstrap creates the desktop environment outside the repository at `~/.nexo/setup/venv`, checks SQLite, detects existing LLM runtime/model files, and records state in `~/.nexo/setup/runtime.json`.
+The bootstrap creates the desktop environment outside the repository at `~/.nexo/setup/venv`, checks SQLite, validates hosted configuration, and records state in `~/.nexo/setup/runtime.json`.
 
 ## 4. Optional desktop shortcut
 
@@ -437,8 +417,7 @@ The repository does not provide a macOS launch daemon/service definition, so the
 - **Permission denied:** make `bootstrap.sh` executable with `chmod +x bootstrap.sh`.
 - **Python too old:** use Python 3.10+.
 - **Dependency failure:** check package installation output and network access.
-- **llama-server not detected:** configure/use an existing compatible `llama-server` installation; the bootstrap does not build it for you.
-- **Model not detected:** configure `NEXO_MODEL_PATH` to an existing `.gguf` file.
+- **Hosted LLM unavailable:** verify `LLM_PROVIDER=openrouter`, the configured hosted model, and network access to OpenRouter. The repository does not start a local model server.
 
 ---
 
@@ -465,8 +444,6 @@ Do **not** replace or recreate the existing Android:
 - Telegram bot configuration
 - `~/.nexo.env`
 - SQLite database
-- GGUF model
-- llama-server configuration
 
 Do not point Android at a newly created desktop virtual environment.
 
@@ -493,7 +470,6 @@ Run bootstrap wrapper
 Detect repository + platform/hardware
        |
        v
-Detect existing llama-server / GGUF
        |
        v
 Verify SQLite can open
@@ -532,25 +508,20 @@ At runtime, `telegram_llama.py` performs load control, input inspection, securit
 NEXO's primary model interface is an OpenAI-compatible local HTTP endpoint configured with:
 
 ```text
-LLAMA_URL=http://127.0.0.1:8080/v1/chat/completions
 ```
 
 The repository's health check uses:
 
 ```text
-http://127.0.0.1:8080/health
 ```
 
 The application does not itself build llama.cpp or download the model. You must have a compatible local runtime/model available.
 
-## GGUF
 
-The model should be an existing `.gguf` file usable by the selected llama.cpp/llama-server runtime.
 
 You can explicitly configure its path with:
 
 ```text
-NEXO_MODEL_PATH=/path/to/model.gguf
 ```
 
 Use a real local path for your machine. Do not commit model files to Git; `.gitignore` excludes `*.gguf`.
@@ -562,9 +533,6 @@ Qwen is an **optional secondary endpoint**, not a mandatory second model.
 Configuration:
 
 ```text
-NEXO_QWEN_FALLBACK_ENABLED=false
-NEXO_QWEN_URL=
-NEXO_QWEN_COMPLEXITY_CHARS=3500
 ```
 
 When enabled and a different Qwen endpoint is configured:
@@ -594,23 +562,19 @@ These operations require network access when used:
 | Python package installation | Normally yes |
 | Tavily/web search | Yes |
 | Other external APIs | Yes |
-| Local llama-server inference | No, if already installed |
+| Hosted OpenRouter inference | Yes |
 | SQLite/local memory | No |
 | Local semantic memory after dependencies/model are installed | No |
 
 ## Offline
 
-After dependencies, model files, and local runtime components are already installed, the core local path can operate without internet:
+The active reasoning path is hosted:
 
 ```text
-User -> NEXO -> security -> local memory -> local LLM -> response
+User -> ALEX -> planner/router -> OpenRouter -> configured model -> response
 ```
 
-Telegram itself still needs internet because it communicates with Telegram's servers.
-
-GitHub auto-update, package installation, web search, and external API calls cannot operate normally offline.
-
-NEXO should therefore be described as **local-first**, not as a completely offline application.
+Telegram and other external integrations require network access. SQLite memory and other local application components can still operate without network access, but the LLM itself is not a local/offline dependency.
 
 ---
 
@@ -636,11 +600,6 @@ Never commit the real file.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot authentication | `<telegram-token>` |
 | `NEXO_OWNER_TELEGRAM_USER_ID` | Owner/privileged Telegram identity | `<telegram-user-id>` |
-| `LLAMA_URL` | Primary OpenAI-compatible LLM endpoint | `http://127.0.0.1:8080/v1/chat/completions` |
-| `NEXO_MODEL_PATH` | Optional explicit GGUF path for bootstrap detection | `/path/to/model.gguf` |
-| `NEXO_QWEN_FALLBACK_ENABLED` | Enables optional Qwen routing | `false` |
-| `NEXO_QWEN_URL` | Secondary Qwen endpoint | `<local-qwen-endpoint>` |
-| `NEXO_QWEN_COMPLEXITY_CHARS` | Complexity threshold | `3500` |
 | `TAVILY_API_KEY` | Tavily/web-search configuration | `<tavily-key>` |
 | `WHISPER_CPP_BIN` | Whisper CLI binary | `whisper-cli` |
 | `WHISPER_CPP_MODEL` | Whisper model path | `<whisper-model-path>` |
@@ -752,10 +711,8 @@ External content and tool output are treated as untrusted data by the system ins
 
 # Health checks
 
-`core/health.py` checks the local llama-server health endpoint:
 
 ```text
-http://127.0.0.1:8080/health
 ```
 
 To run that module directly:
@@ -772,7 +729,7 @@ python core\health.py
 
 A healthy local endpoint returns an object containing `ok: True` and the HTTP status.
 
-The Termux deployment system performs repeated health checks after restart and also verifies that `nexo-backend` and `nexo-llama` are online in PM2.
+The Termux deployment system validates the hosted provider configuration after restart and also verifies the historical `nexo-backend`/`nexo-llama` PM2 compatibility processes.
 
 ---
 
@@ -914,7 +871,7 @@ Keep previous version if recovery succeeds
 
 The updater makes one bounded rollback attempt. This is a recovery mechanism, **not a guarantee of zero downtime or perfect recovery**.
 
-The deployment bootstrap explicitly manages only `nexo-backend` and `nexo-llama`; it does not manage `omnix-backend`.
+The deployment bootstrap preserves the historical `nexo-backend` and `nexo-llama` PM2 names for compatibility. The names are not a local-model contract, and the updater no longer checks a local LLM endpoint.
 
 ---
 
@@ -948,41 +905,9 @@ On desktop, dependency installation is skipped when the manifest's SHA256 matche
 
 On Termux, the desktop bootstrap deliberately does not create a second venv or reinstall the production runtime.
 
-## llama-server is unavailable
+## Hosted provider is unavailable
 
-The bootstrap only detects an existing server. It does not build one.
-
-Check the expected endpoint:
-
-```text
-http://127.0.0.1:8080/health
-```
-
-Then run:
-
-```bash
-python3 core/health.py
-```
-
-If the server is not available, fix the existing llama-server installation/configuration before changing NEXO application code.
-
-## Model not found
-
-Configure an existing GGUF explicitly:
-
-```text
-NEXO_MODEL_PATH=/path/to/model.gguf
-```
-
-The bootstrap only detects the file; it does not download it.
-
-## Qwen unavailable
-
-Qwen is optional. If it is disabled, NEXO stays on the primary Llama route.
-
-If enabled, verify that `NEXO_QWEN_URL` points to a separate already-running endpoint. If Qwen fails, the router can fall back to Llama.
-
-Do not enable a second large model on a low-memory Android device without testing its memory impact.
+Verify the configured OpenRouter environment and network access. No local LLM fallback is attempted.
 
 ## Telegram configuration error
 
@@ -992,9 +917,7 @@ Check that `~/.nexo.env` contains a valid local value. Never paste the real toke
 
 ## Port already in use
 
-The repository expects the default local LLM endpoint on port `8080`. Check which process is using that port using your operating system's normal process/network diagnostic tools, then reconcile the existing runtime configuration with `LLAMA_URL`.
-
-Do not kill unrelated services blindly.
+The active LLM endpoint is hosted through OpenRouter. If requests fail, verify the hosted configuration and network access rather than starting a local model server.
 
 ## SQLite/database problem
 
@@ -1114,7 +1037,6 @@ NEXO-MANAGER-/
 └── nexo_tools.py
 ```
 
-`data/memory.db`, GGUF models, logs, secrets and credentials are intentionally excluded from Git by `.gitignore`.
 
 The repository also contains additional application modules not shown in the simplified tree. Use the actual files as the source of truth when developing against a component.
 
@@ -1191,11 +1113,9 @@ Never commit:
 - authorization headers
 - private keys
 - local databases
-- GGUF model files
 - runtime logs
 - credentials
 
-The repository's `.gitignore` excludes common secret/runtime patterns including `.env`, database files, GGUF files, logs, secrets and credentials.
 
 Use `.nexo.env.example` only as a safe configuration template. Put real values in `~/.nexo.env`.
 
@@ -1205,9 +1125,10 @@ Use `.nexo.env.example` only as a safe configuration template. Put real values i
 
 The repository is intentionally conservative about what the bootstrap promises:
 
-- it detects an existing llama-server; it does not build/download it;
-- it detects existing GGUF files; it does not download models;
-- Qwen routing is optional and requires a separately running endpoint;
+- it does not build, download, start, or detect a local LLM;
+- OpenRouter is the active provider path;
+- no automatic local-model fallback exists;
+- future multi-model routing remains an inactive abstraction;
 - desktop bootstrap does not configure a desktop service manager;
 - Telegram requires internet access;
 - web search/external APIs require network access;

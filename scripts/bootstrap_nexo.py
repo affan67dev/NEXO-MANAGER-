@@ -20,6 +20,8 @@ ENV_FILE = Path.home() / ".nexo.env"
 DB = REPO / "data" / "memory.db"
 MVB_MANIFEST = REPO / "requirements-nexo-mvb.txt"
 FULL_MANIFEST = REPO / "requirements-nexo.txt"
+# Historical PM2 process names are preserved for Termux compatibility. The
+# repository no longer assumes that the second process is a local LLM server.
 PM2_NAMES = ("nexo-backend", "nexo-llama")
 TERMUX_COMMANDS = (
     "termux-speech-to-text", "termux-microphone-record", "termux-tts-speak",
@@ -57,56 +59,6 @@ def hardware() -> dict[str, object]:
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
         "ram_bytes": _detect_ram_bytes(), "gpu": [], "termux": is_termux(),
     }
-
-
-def _existing_file(value: str) -> str | None:
-    if not value:
-        return None
-    try:
-        path = Path(value).expanduser()
-        if path.is_file():
-            return str(path.resolve())
-    except OSError:
-        pass
-    return None
-
-
-def find_llama() -> str | None:
-    candidates = [
-        os.getenv("LLAMA_SERVER", ""), shutil.which("llama-server") or "",
-        str(Path.home() / "llama.cpp" / "build" / "bin" / "llama-server"),
-        str(Path.home() / "llama.cpp" / "llama-server"),
-    ]
-    for candidate in candidates:
-        found = _existing_file(candidate)
-        if found:
-            return found
-    return None
-
-
-def find_models() -> list[str]:
-    roots = [REPO / "models", Path.home() / "models"]
-    if is_termux():
-        roots.append(Path("/sdcard/Download"))
-    configured = _existing_file(os.getenv("NEXO_MODEL_PATH", "").strip())
-    found: list[str] = []
-    if configured and configured.lower().endswith(".gguf"):
-        found.append(configured)
-    for root in roots:
-        try:
-            if not root.is_dir():
-                continue
-            for item in root.glob("*.gguf"):
-                if item.is_file() and str(item.resolve()) not in found:
-                    found.append(str(item.resolve()))
-        except OSError:
-            continue
-    return found[:50]
-
-
-def find_model() -> str | None:
-    models = find_models()
-    return models[0] if models else None
 
 
 def init_sqlite() -> None:
@@ -191,7 +143,11 @@ def ensure_env_template() -> tuple[bool, list[str]]:
         if example.is_file():
             ENV_FILE.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
         else:
-            ENV_FILE.write_text("LLM_PROVIDER=openrouter\nLLM_API_KEY=\nLLM_MODEL=\nLLM_BASE_URL=https://openrouter.ai/api/v1\n", encoding="utf-8")
+            ENV_FILE.write_text(
+                "LLM_PROVIDER=openrouter\nLLM_API_KEY=\nLLM_MODEL=\n"
+                "LLM_BASE_URL=https://openrouter.ai/api/v1\n",
+                encoding="utf-8",
+            )
         try:
             ENV_FILE.chmod(0o600)
         except OSError:
@@ -259,7 +215,7 @@ def install_autostart_hook() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Idempotent ALEX/NEXO Android-aware bootstrap")
     parser.add_argument("--no-install", action="store_true")
-    parser.add_argument("--full-deps", action="store_true", help="install the legacy full dependency manifest; not recommended for Android MVB")
+    parser.add_argument("--full-deps", action="store_true", help="install the full dependency manifest; not recommended for Android MVB")
     parser.add_argument("--enable-autostart", action="store_true")
     args = parser.parse_args()
     if not (REPO / ".git").exists():
@@ -276,25 +232,21 @@ def main() -> int:
         else:
             manifest = FULL_MANIFEST if args.full_deps else (MVB_MANIFEST if is_termux() else FULL_MANIFEST)
             installed = install_missing_manifest(py, manifest, "dependencies.sha256")
-        llama = find_llama()
-        models = find_models()
         api = detect_termux_api()
         pm2 = detect_pm2() if is_termux() else {"available": False, "processes": {}}
         alex_command = install_alex_command()
         autostart = install_autostart_hook() if args.enable_autostart and alex_command else False
         STATE.mkdir(parents=True, exist_ok=True)
         data = {
-            "schema_version": 4, "repo": str(REPO), "hardware": hw,
+            "schema_version": 5, "repo": str(REPO), "hardware": hw,
             "python": {"executable": str(py), "venv": str(VENV) if owns_venv else None},
             "dependency_profile": "full" if args.full_deps else ("android-mvb" if is_termux() else "full"),
             "dependency_manifest": str(manifest), "dependencies_changed": installed,
-            "llama_server": llama, "models": models,
             "telegram_env_file": str(ENV_FILE) if ENV_FILE.exists() else None,
             "llm": {"provider": os.getenv("LLM_PROVIDER", ""), "configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_MODEL"))},
             "termux_api": api, "pm2": pm2, "alex_command": alex_command, "autostart_hook_installed": autostart,
             "env_created": env_created, "missing_env": missing_env,
         }
-        STATE.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, CONFIG)
@@ -309,12 +261,10 @@ def main() -> int:
     print(f"SQLite: PASS ({DB})")
     print(f"MVB dependencies: {'installed/updated' if installed else 'already present or skipped'}")
     print(f"Termux:API: {', '.join(k for k,v in api.items() if v) if is_termux() else 'not applicable'}")
-    print(f"llama-server: {llama or 'not detected (optional for API MVB)'}")
-    print(f"GGUF models: {len(models)} detected")
     print(f"LLM provider: {os.getenv('LLM_PROVIDER') or 'not loaded in process'}")
     print(f"LLM config: {'ready' if not missing_env else 'MISSING ' + ', '.join(missing_env)}")
     print(f"Telegram env: {'present' if ENV_FILE.exists() else 'not present'}")
-    print(f"PM2: {pm2}")
+    print(f"PM2 compatibility state: {pm2}")
     print(f"ALEX command: {'installed as alex' if alex_command else 'use python scripts/alexctl.py'}")
     print(f"Autostart: {'enabled' if autostart else 'not changed'}")
     print(f"Setup state: {CONFIG}")

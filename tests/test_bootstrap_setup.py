@@ -58,9 +58,16 @@ class BootstrapTests(unittest.TestCase):
         for forbidden in ("git reset --hard", "git clean", "git push --force", "git checkout -f"):
             self.assertNotIn(forbidden, source)
 
-    def test_model_detection_is_optional(self):
-        value = MOD.find_model()
-        self.assertTrue(value is None or value.lower().endswith(".gguf"))
+    def test_bootstrap_has_no_local_llm_detection(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        for forbidden in ("find_llama", "find_models", "find_model", "LLAMA_SERVER", "NEXO_MODEL_PATH", "llama-server", ".gguf"):
+            self.assertNotIn(forbidden, source)
+
+    def test_hosted_provider_is_the_bootstrap_configuration_path(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
+        self.assertIn("LLM_PROVIDER", source)
+        self.assertIn("openrouter", source)
+        self.assertIn("LLM_MODEL", source)
 
 
 if __name__ == "__main__":

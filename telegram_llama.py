@@ -33,7 +33,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
-SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are NEXO, a safe personal AI executive assistant."
+SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are ALEX, a safe personal AI executive assistant."
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
@@ -58,10 +58,13 @@ def _clip(text: str, limit: int) -> str:
 
 
 def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "") -> list[dict[str, str]]:
-    system = SYSTEM
-    system += "\n\nRelevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)
+    # Keep the core policy system message separate from discardable context so
+    # context-budget fitting can remove memory/history before rejecting the request.
+    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+    if memory_text.strip():
+        messages.append({"role": "system", "content": "Relevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)})
     if knowledge_text:
-        system += "\n\nAuthorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)
+        messages.append({"role": "system", "content": "Authorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)})
     selected: list[tuple[str, str]] = []
     used = 0
     for role, content in reversed(turns):
@@ -72,7 +75,6 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
         selected.append(item)
         used += cost
     selected.reverse()
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend({"role": role, "content": content} for role, content in selected)
     messages.append({"role": "user", "content": goal})
     return messages
@@ -217,7 +219,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except RuntimeError as exc:
         logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
-        if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
+        if str(exc).startswith(("context_budget_exceeded_user_message_too_large", "context_budget_insufficient")):
             await update.message.reply_text("That message is too large for NEXO's current context budget. Please send a shorter request.")
         else:
             await update.message.reply_text(_safe_failure_message())

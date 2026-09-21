@@ -1,20 +1,20 @@
 {
   "manager": {
-    "model": "llama",
+    "model": "configured_hosted_model",
     "role": "manager_orchestrator",
     "permissions": ["plan","delegate","coordinate","review","report"],
     "production_deploy": false,
     "destructive_database_access": false
   },
   "coder": {
-    "model": "deepseek",
+    "model": "future_agent_role",
     "role": "coding_debugging",
     "permissions": ["inspect_code","prepare_patch","run_tests","fix_code"],
     "production_deploy": false,
     "destructive_database_access": false
   },
   "auditor": {
-    "model": "qwen",
+    "model": "future_agent_role",
     "role": "security_audit_quality_review",
     "permissions": ["review_code","security_scan","find_risks","check_multilingual_support"],
     "production_deploy": false,
