@@ -117,6 +117,24 @@ class PublicKnowledgeRefreshTests(unittest.TestCase):
         docs = retrieve_knowledge("private data", channel="portfolio_web", scope="public_portfolio", db_path=self.db)
         self.assertEqual(docs, [])
 
+    def test_internal_readme_sections_are_excluded(self) -> None:
+        readme = "# Project\n\nPublic description.\n\n## Configuration\n\nTELEGRAM_BOT_TOKEN=hidden\n\n## Features\n\nPublic feature."
+        response = FakeResponse(
+            {
+                "type": "file",
+                "name": "README.md",
+                "sha": "sha-sections",
+                "content": base64.b64encode(readme.encode()).decode(),
+            }
+        )
+        with patch.dict("os.environ", {"NEXO_PUBLIC_GITHUB_REPOSITORIES": "OMNIX"}, clear=False):
+            PublicKnowledgeRefresher(FakeClient(response), db_path=str(self.db)).refresh()
+        docs = retrieve_knowledge("Project Features", channel="portfolio_web", scope="public_portfolio", db_path=self.db)
+        joined = "\n".join(item["content"] for item in docs)
+        self.assertIn("Public description.", joined)
+        self.assertIn("Public feature.", joined)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
