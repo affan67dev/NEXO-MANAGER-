@@ -39,6 +39,34 @@ class TelegramNexoFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(planner.calls[0][3]["intent"], "conversation")
         update.message.reply_text.assert_awaited_once_with("Python is a programming language.")
 
+    async def test_simple_request_does_not_load_optional_context(self):
+        import telegram_llama
+        planner = FakePlanner(result="4")
+        update = self._update("What is 2+2?")
+        async def fake_heartbeat(_): return None
+        async def fake_attachment(*_): return None
+        async def fake_acquire(_): return True, "ok"
+        async def fake_release(): return None
+        with patch.object(telegram_llama.load_guard, "acquire", fake_acquire), patch.object(telegram_llama.load_guard, "release", fake_release), patch.object(telegram_llama, "typing_heartbeat", fake_heartbeat), patch.object(telegram_llama, "handle_attachment", fake_attachment), patch.object(telegram_llama, "planner", planner), patch.object(telegram_llama, "get_or_create_session", return_value="s1"), patch.object(telegram_llama, "recent_turns", side_effect=AssertionError("history should not be loaded")), patch.object(telegram_llama.memory, "search", side_effect=AssertionError("memory should not be loaded")), patch.object(telegram_llama, "retrieve_knowledge", side_effect=AssertionError("knowledge should not be loaded")), patch.object(telegram_llama, "save_turn"):
+            await telegram_llama.chat(update, SimpleNamespace())
+        messages = planner.calls[0][1]
+        self.assertEqual([m["role"] for m in messages], ["system", "user"])
+        self.assertEqual(messages[-1]["content"], "What is 2+2?")
+
+    async def test_contextual_request_loads_bounded_history_and_relevant_memory(self):
+        import telegram_llama
+        planner = FakePlanner(result="remembered")
+        update = self._update("As discussed, continue my project")
+        async def fake_heartbeat(_): return None
+        async def fake_attachment(*_): return None
+        async def fake_acquire(_): return True, "ok"
+        async def fake_release(): return None
+        with patch.object(telegram_llama.load_guard, "acquire", fake_acquire), patch.object(telegram_llama.load_guard, "release", fake_release), patch.object(telegram_llama, "typing_heartbeat", fake_heartbeat), patch.object(telegram_llama, "handle_attachment", fake_attachment), patch.object(telegram_llama, "planner", planner), patch.object(telegram_llama, "get_or_create_session", return_value="s1"), patch.object(telegram_llama, "recent_turns", return_value=[("user", "old")]*20), patch.object(telegram_llama.memory, "search", return_value=[{"content": "memory fact"}]), patch.object(telegram_llama, "retrieve_knowledge", return_value=[]), patch.object(telegram_llama, "save_turn"):
+            await telegram_llama.chat(update, SimpleNamespace())
+        messages = planner.calls[0][1]
+        self.assertLessEqual(sum(1 for m in messages if m["role"] in {"user", "assistant"}), 5)
+        self.assertIn("memory fact", " ".join(m["content"] for m in messages))
+
     async def test_task_request_gets_tools(self):
         import telegram_llama
         planner = FakePlanner()
