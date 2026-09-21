@@ -1,6 +1,6 @@
 {
   "manager": true,
-  "llama_local": true,
+  "llama_local": false,
   "research_agent": true,
   "coding_agent": true,
   "media_agent": true,
