@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 from core.portfolio_store import knowledge_version_exists, prune_public_repository_versions, upsert_knowledge
 
@@ -83,6 +85,25 @@ def _chunks(content: str) -> list[str]:
             break
         start = max(start + 1, end - CHUNK_OVERLAP)
     return chunks
+
+
+def _portfolio_url() -> str:
+    value = os.getenv("NEXO_PUBLIC_PORTFOLIO_URL", "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("public_portfolio_url_must_be_https")
+    return value
+
+
+def _extract_public_portfolio(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup(["script", "style", "noscript", "template"]):
+        node.decompose()
+    text = soup.get_text("\n", strip=True)
+    return _public_text(text)[:MAX_README_CHARS].strip()
+
 
 
 def _readme_url(repository: str) -> str:
@@ -174,6 +195,42 @@ class PublicKnowledgeRefresher:
                         "status": "error",
                         "error": exc.__class__.__name__,
                     })
+            portfolio_url = _portfolio_url()
+            if portfolio_url:
+                try:
+                    response = self.client.get(portfolio_url)
+                    response.raise_for_status()
+                    if len(response.content) > 500000:
+                        raise ValueError("public_portfolio_response_too_large")
+                    portfolio_text = _extract_public_portfolio(response.text)
+                    version_sha = hashlib.sha256(portfolio_text.encode("utf-8")).hexdigest()
+                    repository_key = "public_portfolio_website"
+                    if portfolio_text and (force or not knowledge_version_exists(repository_key, version_sha)):
+                        for index, chunk in enumerate(_chunks(portfolio_text), start=1):
+                            upsert_knowledge(
+                                source="public_portfolio",
+                                source_type="public_portfolio",
+                                repository=repository_key,
+                                file_path=f"index.html#chunk-{index:03d}",
+                                project="Affan Mir Portfolio",
+                                title="Affan Mir Portfolio",
+                                source_url=portfolio_url,
+                                scope="public_portfolio",
+                                content=chunk,
+                                visibility="public",
+                                version_sha=version_sha,
+                                content_hash=hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
+                                last_ingested_at=_now(),
+                                indexed=True,
+                            )
+                        prune_public_repository_versions(repository_key, version_sha)
+                        results.append({"repository": repository_key, "status": "refreshed", "version_sha": version_sha})
+                    elif portfolio_text:
+                        results.append({"repository": repository_key, "status": "unchanged", "version_sha": version_sha})
+                    else:
+                        results.append({"repository": repository_key, "status": "empty"})
+                except (httpx.HTTPError, UnicodeError, ValueError) as exc:
+                    results.append({"repository": "public_portfolio_website", "status": "error", "error": exc.__class__.__name__})
             return {"ok": True, "sources": results}
         finally:
             if self._owns_client:
