@@ -97,7 +97,7 @@ def upsert_knowledge(
     version_sha: str = "",
     indexed: bool = True,
     source_type: str = "legacy",
-    scope: str = "public_portfolio",
+    scope: str | None = None,
     title: str = "",
     source_url: str = "",
     content_hash: str = "",
@@ -109,7 +109,8 @@ def upsert_knowledge(
         raise ValueError("knowledge_content_rejected")
     if visibility not in {"public", "private", "internal"}:
         raise ValueError("invalid_visibility")
-    if scope not in {"public_portfolio", "telegram_public", "owner_admin"}:
+    resolved_scope = scope or ("public_portfolio" if visibility == "public" else "owner_admin")
+    if resolved_scope not in {"public_portfolio", "telegram_public", "owner_admin"}:
         raise ValueError("invalid_scope")
     ensure_schema(db_path)
     now = _now()
@@ -147,7 +148,7 @@ def upsert_knowledge(
                 source_url,
                 value,
                 visibility,
-                scope,
+                resolved_scope,
                 version_sha,
                 content_hash,
                 now,
@@ -212,8 +213,11 @@ def retrieve_knowledge(
 
     visibility = visibility_by_scope[scope]
     placeholders = ",".join("?" for _ in visibility)
-    where = [f"visibility IN ({placeholders})", "indexed_at IS NOT NULL", "scope=?"]
-    params: list[Any] = list(sorted(visibility)) + [scope]
+    where = [f"visibility IN ({placeholders})", "indexed_at IS NOT NULL"]
+    params: list[Any] = list(sorted(visibility))
+    if channel == "portfolio_web":
+        where.append("scope=?")
+        params.append("public_portfolio")
     if project:
         where.append("project=?")
         params.append(project)
