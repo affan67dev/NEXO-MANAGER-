@@ -105,5 +105,25 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(context.scope, "public_portfolio")
 
 
+class PortfolioApiSecurityTests(unittest.TestCase):
+    def test_portfolio_context_is_public_visitor_scope(self):
+        context = RequestContext.portfolio("session-id")
+        self.assertEqual(context.channel, "portfolio_web")
+        self.assertEqual(context.actor_type, "visitor")
+        self.assertEqual(context.scope, "public_portfolio")
+        self.assertIsNone(context.actor_id)
+        self.assertEqual(context.session_id, "session-id")
+
+    def test_public_knowledge_scope_excludes_private_and_internal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.db"
+            ensure_schema(db)
+            upsert_knowledge(source="github", repository="public/repo", file_path="README.md", project="OMNIX", content="public fact", visibility="public", version_sha="1", db_path=db)
+            upsert_knowledge(source="internal", repository="private/repo", file_path="secret.md", project="OMNIX", content="private fact", visibility="private", version_sha="2", db_path=db)
+            upsert_knowledge(source="internal", repository="internal/repo", file_path="config.md", project="OMNIX", content="internal fact", visibility="internal", version_sha="3", db_path=db)
+            result = retrieve_knowledge("OMNIX fact", channel="portfolio_web", scope="public_portfolio", db_path=db)
+            self.assertEqual([item["visibility"] for item in result], ["public"])
+
+
 if __name__ == "__main__":
     unittest.main()
