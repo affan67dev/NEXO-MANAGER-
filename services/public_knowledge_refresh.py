@@ -12,7 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-from core.portfolio_store import knowledge_version_exists, prune_public_repository_versions, upsert_knowledge
+from core.portfolio_store import DB, knowledge_version_exists, prune_public_repository_versions, upsert_knowledge
 
 GITHUB_API = "https://api.github.com"
 OWNER = "affan67dev"
@@ -113,7 +113,7 @@ def _readme_url(repository: str) -> str:
 class PublicKnowledgeRefresher:
     """Fetch only explicitly allowlisted public GitHub READMEs."""
 
-    def __init__(self, client: httpx.Client | None = None) -> None:
+    def __init__(self, client: httpx.Client | None = None, db_path: str | None = None) -> None:
         self.client = client or httpx.Client(
             base_url=GITHUB_API,
             timeout=DEFAULT_TIMEOUT,
@@ -124,6 +124,7 @@ class PublicKnowledgeRefresher:
             },
         )
         self._owns_client = client is None
+        self.db_path = db_path or str(DB)
 
     def close(self) -> None:
         if self._owns_client:
@@ -157,7 +158,7 @@ class PublicKnowledgeRefresher:
 
                     version_sha = str(data.get("sha") or hashlib.sha256(content.encode()).hexdigest())
                     repository_key = f"{OWNER}/{source.repository}"
-                    if not force and knowledge_version_exists(repository_key, version_sha):
+                    if not force and knowledge_version_exists(repository_key, version_sha, db_path=self.db_path):
                         results.append({"repository": source.repository, "status": "unchanged", "version_sha": version_sha})
                         continue
 
@@ -180,9 +181,10 @@ class PublicKnowledgeRefresher:
                             content_hash=chunk_hash,
                             last_ingested_at=_now(),
                             indexed=True,
+                            db_path=self.db_path,
                         )
                         inserted += 1
-                    prune_public_repository_versions(repository_key, version_sha)
+                    prune_public_repository_versions(repository_key, version_sha, db_path=self.db_path)
                     results.append({
                         "repository": source.repository,
                         "status": "refreshed" if inserted else "empty",
@@ -237,5 +239,5 @@ class PublicKnowledgeRefresher:
                 self.close()
 
 
-def refresh_public_knowledge(*, force: bool = False) -> dict[str, Any]:
-    return PublicKnowledgeRefresher().refresh(force=force)
+def refresh_public_knowledge(*, force: bool = False, db_path: str | None = None) -> dict[str, Any]:
+    return PublicKnowledgeRefresher(db_path=db_path).refresh(force=force)
