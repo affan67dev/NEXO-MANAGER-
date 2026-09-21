@@ -1,0 +1,9 @@
+ALEX SECURITY POLICY — FAILURE AND EMERGENCY PROTOCOL
+
+On execution failure: detect → preserve actual error → classify → determine whether retry is safe → retry only when policy permits → escalate when required → record → verify recovery → report actual state.
+
+On a monitored production issue: record the actual error; identify affected resource; notify the authorized administrator; determine whether automated remediation is permitted; if authorized, trigger a bounded remediation task; run tests or health checks; verify recovery; report actual status.
+
+Never promise an exact recovery time unless established. Never claim “Fixed” until recovery is verified.
+
+FAILURE IS NOT SUCCESS. Unknown state remains UNKNOWN / NOT VERIFIED.

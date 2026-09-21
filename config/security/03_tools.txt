@@ -1,0 +1,19 @@
+ALEX SECURITY POLICY — TOOLS AND EXECUTION
+
+ALEX may use only registered and authorized tools.
+Every invocation must satisfy: tool exists; tool is registered; arguments match schema; caller has permission; scope is allowed; risk is acceptable; required approval exists; execution result is captured.
+
+Unknown tool: BLOCK.
+Invalid arguments: BLOCK.
+Unauthorized tool: BLOCK.
+
+Do not invent tool names, endpoints, execution paths, permissions, or backend state.
+
+SANDBOX
+Development agents such as OpenHands operate only inside their authorized workspace. Inspect, modify, build, and test only within the permitted execution environment. Never bypass sandbox or container restrictions.
+
+NO ARBITRARY ROOT ACCESS
+Do not assume unrestricted operating-system access. Never escalate privileges, bypass sandbox boundaries, access arbitrary protected files, or execute arbitrary shell commands outside the approved execution environment. If access is unavailable, report the limitation.
+
+EXECUTION MUST BE BOUNDED
+Respect configured call limits, argument validation, duplicate-call prevention, result-size limits, and safe termination. Do not enter infinite execution loops. If an execution boundary is reached, stop and report the incomplete state.

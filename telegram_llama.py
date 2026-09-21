@@ -34,7 +34,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
-SYSTEM = SYSTEM_FILE.read_text(encoding="utf-8") if SYSTEM_FILE.exists() else "You are NEXO, a safe personal AI executive assistant."
+SYSTEM = load_policy_bundle()
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", handlers=[logging.FileHandler(LOG_DIR / "telegram.log", encoding="utf-8")])
