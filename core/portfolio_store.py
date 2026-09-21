@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import secrets
 import sqlite3
@@ -12,8 +11,18 @@ from typing import Any, Iterator
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "data" / "memory.db"
 MIGRATION = BASE / "migrations" / "001_portfolio_ai.sql"
+METADATA_COLUMNS = {
+    "source_type": "TEXT NOT NULL DEFAULT 'legacy'",
+    "scope": "TEXT NOT NULL DEFAULT 'public_portfolio'",
+    "title": "TEXT NOT NULL DEFAULT ''",
+    "source_url": "TEXT NOT NULL DEFAULT ''",
+    "content_hash": "TEXT NOT NULL DEFAULT ''",
+    "last_ingested_at": "TEXT",
+}
 
-SECRET = re.compile(r"(?i)(api[_ -]?key|password|token|secret|private[_ -]?(?:key|repo|repository|database)|authorization|bearer)\s*[:=]?\s*\S+")
+SECRET = re.compile(
+    r"(?i)(api[_ -]?key|password|token|secret|private[_ -]?(?:key|repo|repository|database)|authorization|bearer)\s*[:=]?\s*\S+"
+)
 
 
 def _now() -> str:
@@ -40,6 +49,10 @@ def ensure_schema(db_path: Path | str = DB) -> None:
     with connect(db_path) as conn:
         if MIGRATION.exists():
             conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_documents)")}
+        for name, definition in METADATA_COLUMNS.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE knowledge_documents ADD COLUMN {name} {definition}")
 
 
 def new_session_id() -> str:
@@ -73,22 +86,89 @@ def recent_visitor_turns(session_id: str, limit: int = 8, *, db_path: Path | str
     return list(reversed(rows))
 
 
-def upsert_knowledge(*, source: str, repository: str, file_path: str, project: str, content: str, visibility: str = "public", version_sha: str = "", indexed: bool = True, db_path: Path | str = DB) -> int:
+def upsert_knowledge(
+    *,
+    source: str,
+    repository: str,
+    file_path: str,
+    project: str,
+    content: str,
+    visibility: str = "public",
+    version_sha: str = "",
+    indexed: bool = True,
+    source_type: str = "legacy",
+    scope: str = "public_portfolio",
+    title: str = "",
+    source_url: str = "",
+    content_hash: str = "",
+    last_ingested_at: str | None = None,
+    db_path: Path | str = DB,
+) -> int:
     value = str(content or "").strip()
     if not value or len(value) > 100000 or SECRET.search(value):
         raise ValueError("knowledge_content_rejected")
     if visibility not in {"public", "private", "internal"}:
         raise ValueError("invalid_visibility")
+    if scope not in {"public_portfolio", "telegram_public", "owner_admin"}:
+        raise ValueError("invalid_scope")
     ensure_schema(db_path)
+    now = _now()
+    ingested = last_ingested_at or now
     with connect(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO knowledge_documents(source,repository,file_path,project,content,visibility,version_sha,created_at,updated_at,indexed_at) VALUES(?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN ? ELSE NULL END) ON CONFLICT(repository,file_path,version_sha) DO UPDATE SET source=excluded.source,project=excluded.project,content=excluded.content,visibility=excluded.visibility,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at",
-            (source, repository, file_path, project, value, visibility, version_sha, _now(), _now(), indexed, _now()),
+            """
+            INSERT INTO knowledge_documents(
+                source,source_type,repository,file_path,project,title,source_url,
+                content,visibility,scope,version_sha,content_hash,
+                created_at,updated_at,last_ingested_at,indexed_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN ? ELSE NULL END)
+            ON CONFLICT(repository,file_path,version_sha) DO UPDATE SET
+                source=excluded.source,
+                source_type=excluded.source_type,
+                project=excluded.project,
+                title=excluded.title,
+                source_url=excluded.source_url,
+                content=excluded.content,
+                visibility=excluded.visibility,
+                scope=excluded.scope,
+                content_hash=excluded.content_hash,
+                updated_at=excluded.updated_at,
+                last_ingested_at=excluded.last_ingested_at,
+                indexed_at=excluded.indexed_at
+            """,
+            (
+                source,
+                source_type,
+                repository,
+                file_path,
+                project,
+                title,
+                source_url,
+                value,
+                visibility,
+                scope,
+                version_sha,
+                content_hash,
+                now,
+                now,
+                ingested,
+                indexed,
+                now,
+            ),
         )
         return int(cur.lastrowid or 0)
 
 
-def retrieve_knowledge(query: str, *, channel: str, scope: str, project: str | None = None, limit: int = 5, db_path: Path | str = DB) -> list[dict[str, Any]]:
+def retrieve_knowledge(
+    query: str,
+    *,
+    channel: str,
+    scope: str,
+    project: str | None = None,
+    limit: int = 5,
+    db_path: Path | str = DB,
+) -> list[dict[str, Any]]:
     visibility_by_scope = {
         "public_portfolio": {"public"},
         "telegram_public": {"public"},
@@ -100,27 +180,59 @@ def retrieve_knowledge(query: str, *, channel: str, scope: str, project: str | N
         return []
     if channel == "telegram" and scope == "public_portfolio":
         return []
+
     terms = [t for t in re.findall(r"[\w-]+", (query or "").lower()) if len(t) > 2][:8]
     if not terms:
         return []
     ensure_schema(db_path)
+
     visibility = visibility_by_scope[scope]
     placeholders = ",".join("?" for _ in visibility)
-    where = [f"visibility IN ({placeholders})", "indexed_at IS NOT NULL"]
-    params: list[Any] = list(sorted(visibility))
+    where = [f"visibility IN ({placeholders})", "indexed_at IS NOT NULL", "scope=?"]
+    params: list[Any] = list(sorted(visibility)) + [scope]
     if project:
         where.append("project=?")
         params.append(project)
-    relevance = " + ".join(["CASE WHEN lower(content) LIKE ? OR lower(project) LIKE ? OR lower(file_path) LIKE ? THEN 1 ELSE 0 END" for _ in terms])
+
+    relevance = " + ".join(
+        [
+            "CASE WHEN lower(content) LIKE ? OR lower(project) LIKE ? OR lower(file_path) LIKE ? OR lower(title) LIKE ? THEN 1 ELSE 0 END"
+            for _ in terms
+        ]
+    )
     for term in terms:
-        params.extend((f"%{term}%", f"%{term}%", f"%{term}%"))
+        params.extend((f"%{term}%", f"%{term}%", f"%{term}%", f"%{term}%"))
     params.append(max(1, min(int(limit), 10)))
+
     with connect(db_path) as conn:
         rows = conn.execute(
-            f"SELECT source,repository,file_path,project,content,visibility,version_sha,updated_at FROM knowledge_documents WHERE {' AND '.join(where)} ORDER BY ({relevance}) DESC, updated_at DESC LIMIT ?",
+            f"""
+            SELECT source,source_type,repository,file_path,project,title,source_url,
+                   content,visibility,scope,version_sha,content_hash,updated_at,last_ingested_at
+            FROM knowledge_documents
+            WHERE {' AND '.join(where)}
+            ORDER BY ({relevance}) DESC, updated_at DESC
+            LIMIT ?
+            """,
             params,
         ).fetchall()
+
     return [
-        {"source": r[0], "repository": r[1], "file_path": r[2], "project": r[3], "content": r[4], "visibility": r[5], "version_sha": r[6], "updated_at": r[7]}
+        {
+            "source": r[0],
+            "source_type": r[1],
+            "repository": r[2],
+            "file_path": r[3],
+            "project": r[4],
+            "title": r[5],
+            "source_url": r[6],
+            "content": r[7],
+            "visibility": r[8],
+            "scope": r[9],
+            "version_sha": r[10],
+            "content_hash": r[11],
+            "updated_at": r[12],
+            "last_ingested_at": r[13],
+        }
         for r in rows
     ]
