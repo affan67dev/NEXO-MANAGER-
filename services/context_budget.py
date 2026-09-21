@@ -32,9 +32,21 @@ def input_budget() -> int:
 def count_input_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> int:
     """Bounded local estimate; no dependency on a local model tokenizer endpoint."""
     payload = json.dumps({"messages": messages, "tools": tools or []}, ensure_ascii=False, separators=(",", ":"))
-    # Conservative text/JSON heuristic. The previous 2 chars/token estimate
-    # overstated English system prompts enough to reject valid small requests.
-    return math.ceil(len(payload) / ESTIMATED_CHARS_PER_TOKEN)
+    # Keep the general estimate conservative enough for real prompts without
+    # over-counting large system prompts. Long conversational/tool-result
+    # messages are deliberately weighted more heavily because they are the
+    # context that must be compacted before the current request is sent.
+    estimate = math.ceil(len(payload) / ESTIMATED_CHARS_PER_TOKEN)
+    long_context_chars = 0
+    for item in messages:
+        if item.get("role") == "system":
+            continue
+        content = str(item.get("content") or "")
+        if len(content) > 1000:
+            long_context_chars += len(content) - 1000
+    if long_context_chars:
+        estimate += math.ceil(long_context_chars / 2)
+    return estimate
 
 
 def fit_messages(
@@ -56,7 +68,9 @@ def fit_messages(
     if system is not None and not str(system.get("content") or "").strip():
         raise RuntimeError("context_budget_empty_system")
 
-    limit = input_budget() if budget is None else max(128, int(budget))
+    limit = input_budget() if budget is None else int(budget)
+    if limit <= 0:
+        raise RuntimeError("context_budget_invalid_limit")
     mandatory = ([system] if system else []) + [current_user]
     if count_input_tokens(mandatory, tools) > limit:
         raise RuntimeError("context_budget_insufficient")

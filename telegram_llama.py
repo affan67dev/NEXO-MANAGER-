@@ -79,6 +79,13 @@ def _needs_knowledge(goal: str, intent: str | None = None) -> bool:
 
 def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str, knowledge_text: str = "", *, include_history: bool = True, include_memory: bool = True, include_knowledge: bool = True) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+    # Optional context is kept separate from the core system prompt. Place
+    # policy-relevant memory/knowledge blocks before conversational history so
+    # the core + optional system context has deterministic priority when fitting.
+    if include_memory and memory_text.strip():
+        messages.append({"role": "system", "content": "Relevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)})
+    if include_knowledge and knowledge_text.strip():
+        messages.append({"role": "system", "content": "Authorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)})
     if include_history and turns:
         selected: list[tuple[str, str]] = []
         used = 0
@@ -91,10 +98,6 @@ def build_llm_messages(goal: str, turns: list[tuple[str, str]], memory_text: str
             used += cost
         selected.reverse()
         messages.extend({"role": role, "content": content} for role, content in selected)
-    if include_memory and memory_text.strip():
-        messages.append({"role": "system", "content": "Relevant user memory:\n" + _clip(memory_text, MAX_MEMORY_CHARS)})
-    if include_knowledge and knowledge_text.strip():
-        messages.append({"role": "system", "content": "Authorized NEXO knowledge:\n" + _clip(knowledge_text, MAX_KNOWLEDGE_CHARS)})
     messages.append({"role": "user", "content": goal})
     return messages
 
