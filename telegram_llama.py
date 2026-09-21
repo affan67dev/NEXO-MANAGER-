@@ -242,7 +242,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except RuntimeError as exc:
         logger.exception("NEXO pipeline failure category=%s user_id=%s", str(exc), user.id)
-        if str(exc).startswith("context_budget_exceeded_user_message_too_large"):
+        if str(exc).startswith(("context_budget_exceeded_user_message_too_large", "context_budget_insufficient")):
             await update.message.reply_text("That message is too large for NEXO's current context budget. Please send a shorter request.")
         else:
             await update.message.reply_text(_safe_failure_message())
