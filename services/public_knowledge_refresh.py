@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from core.portfolio_store import upsert_knowledge
+from core.portfolio_store import knowledge_version_exists, prune_public_repository_versions, upsert_knowledge
 
 GITHUB_API = "https://api.github.com"
 OWNER = "affan67dev"
@@ -135,6 +135,11 @@ class PublicKnowledgeRefresher:
                         continue
 
                     version_sha = str(data.get("sha") or hashlib.sha256(content.encode()).hexdigest())
+                    repository_key = f"{OWNER}/{source.repository}"
+                    if not force and knowledge_version_exists(repository_key, version_sha):
+                        results.append({"repository": source.repository, "status": "unchanged", "version_sha": version_sha})
+                        continue
+
                     chunks = _chunks(content)
                     inserted = 0
                     for index, chunk in enumerate(chunks, start=1):
@@ -156,6 +161,7 @@ class PublicKnowledgeRefresher:
                             indexed=True,
                         )
                         inserted += 1
+                    prune_public_repository_versions(repository_key, version_sha)
                     results.append({
                         "repository": source.repository,
                         "status": "refreshed" if inserted else "empty",
