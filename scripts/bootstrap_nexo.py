@@ -197,7 +197,7 @@ def install_autostart_hook() -> bool:
     end = "# <<< NEXO ALEX AUTOSTART <<<"
     block = (
         f"\n{marker}\n"
-        f'if [ "[object Object]" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
+        f'if [ "${NEXO_ALEX_AUTOSTART:-false}" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
         f'  alex start >/dev/null 2>&1 || true\n'
         f"fi\n{end}\n"
     )
