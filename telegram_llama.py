@@ -17,6 +17,7 @@ from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.portfolio_store import retrieve_knowledge
 from core.request_context import RequestContext
+from core.security_policy import load_policy_bundle
 from core.identity import resolve_telegram_identity
 from core.router import create_task
 from core.semantic_memory import memory
