@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
+if FASTAPI_AVAILABLE:
+    import portfolio_api
+    from fastapi.testclient import TestClient
 
-import portfolio_api
 
-
+@unittest.skipUnless(FASTAPI_AVAILABLE, "FastAPI is not installed in the Android MVB test profile")
 class PortfolioAPISecurityTests(unittest.TestCase):
     def setUp(self):
         self.env = {
