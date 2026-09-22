@@ -16,13 +16,13 @@ from core.portfolio_store import DB, knowledge_version_exists, prune_public_repo
 
 GITHUB_API = "https://api.github.com"
 OWNER = "affan67dev"
-DEFAULT_REPOSITORIES = (
-    "affan67dev",
+APPROVED_REPOSITORIES = frozenset({
     "NEXO-MANAGER-",
     "OMNIX",
     "PicSyncApp",
     "ajentic-AI-model",
-)
+})
+DEFAULT_REPOSITORIES = tuple(sorted(APPROVED_REPOSITORIES))
 DEFAULT_TIMEOUT = 10.0
 MAX_README_CHARS = 50000
 PRIVATE_SECTIONS = re.compile(
@@ -54,7 +54,7 @@ def configured_sources() -> tuple[PublicGitHubSource, ...]:
                 continue
         else:
             repo = name
-        if not repo or repo in seen:
+        if repo not in APPROVED_REPOSITORIES or repo in seen:
             continue
         seen.add(repo)
         result.append(PublicGitHubSource(repo, repo))

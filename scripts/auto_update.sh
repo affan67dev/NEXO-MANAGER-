@@ -10,7 +10,6 @@ REMOTE="origin"
 BRANCH="main"
 REPO_SLUG="affan67dev/NEXO-MANAGER-"
 CI_WORKFLOW="NEXO CI"
-HEALTH_URL="http://127.0.0.1:8080/health"
 HEALTH_ATTEMPTS=6
 HEALTH_DELAY=5
 
@@ -28,17 +27,23 @@ write_state() { printf '%s\n' "$2" > "${STATE_DIR}/$1"; }
 pm2_ok() {
   command -v pm2 >/dev/null 2>&1 || return 1
   pm2 describe nexo-backend >/dev/null 2>&1 || return 1
-  pm2 describe nexo-llama >/dev/null 2>&1 || return 1
-  local statuses
-  statuses="$(pm2 jlist 2>/dev/null | python -c 'import json,sys; d=json.load(sys.stdin); names={p.get("name"):p.get("pm2_env",{}).get("status") for p in d}; print(names.get("nexo-backend",""),names.get("nexo-llama",""))' 2>/dev/null || true)"
-  [[ "$statuses" == "online online" ]]
+  pm2 describe nexo-backend >/dev/null 2>&1
 }
-restart_nexo() { pm2 describe nexo-backend >/dev/null 2>&1 && pm2 describe nexo-llama >/dev/null 2>&1 && pm2 restart nexo-backend nexo-llama --update-env >/dev/null; }
+restart_nexo() { pm2 describe nexo-backend >/dev/null 2>&1 && pm2 restart nexo-backend --update-env >/dev/null; }
+
+hosted_config_ok() {
+  python - <<'PY'
+from dotenv import load_dotenv
+load_dotenv(str(__import__("pathlib").Path.home() / ".nexo.env"), override=False)
+from services.llm_provider import LLMConfig
+config = LLMConfig.from_env()
+raise SystemExit(0 if config.provider == "openrouter" else 1)
+PY
+}
 health_ok() {
-  local attempt status
+  local attempt
   for ((attempt=1; attempt<=HEALTH_ATTEMPTS; attempt++)); do
-    status="$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' "$HEALTH_URL" 2>/dev/null || printf '000')"
-    if [[ "$status" == "200" ]] && pm2_ok; then return 0; fi
+    if hosted_config_ok && pm2_ok; then return 0; fi
     [[ "$attempt" -lt "$HEALTH_ATTEMPTS" ]] && sleep "$HEALTH_DELAY"
   done
   return 1

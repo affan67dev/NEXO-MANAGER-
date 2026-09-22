@@ -23,7 +23,7 @@ class DeploymentSafetyTests(unittest.TestCase):
     def test_only_nexo_pm2_targets_are_present(self):
         text = AUTO.read_text(encoding="utf-8")
         self.assertIn("nexo-backend", text)
-        self.assertIn("nexo-llama", text)
+        self.assertNotIn("nexo-llama", text)
         self.assertNotIn("omnix-backend", text.lower())
 
     def test_release_and_ci_gates_exist(self):
@@ -37,7 +37,7 @@ class DeploymentSafetyTests(unittest.TestCase):
     def test_bootstrap_uses_thirty_minute_schedule(self):
         text = BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn("*/30 * * * *", text)
-        self.assertIn("start_llama_tablet.sh", text)
+        self.assertNotIn("start_llama_tablet.sh", text)
         self.assertIn("start_nexo_tablet.sh", text)
 
 

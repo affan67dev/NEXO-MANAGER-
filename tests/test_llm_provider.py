@@ -48,6 +48,14 @@ class LLMProviderTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     LLMConfig.from_env()
 
+    def test_base_url_must_be_verified_openrouter_https_endpoint(self):
+        for base_url in ("http://127.0.0.1:8080/v1", "https://example.invalid/api/v1", "https://openrouter.ai/other"):
+            with patch.dict(os.environ, dict(self.env, LLM_BASE_URL=base_url), clear=True):
+                with self.assertRaisesRegex(RuntimeError, "llm_base_url_invalid"):
+                    LLMConfig.from_env()
+        with patch.dict(os.environ, dict(self.env, LLM_BASE_URL="https://eu.openrouter.ai/api/v1"), clear=True):
+            self.assertEqual(LLMConfig.from_env().base_url, "https://eu.openrouter.ai/api/v1")
+
     def test_fallback_models_are_optional_and_exclude_primary_duplicates(self):
         env = dict(self.env, LLM_FALLBACK_MODELS="backup/a, backup/b, test/model, backup/a")
         with patch.dict(os.environ, env, clear=True):

@@ -40,6 +40,12 @@ class PublicKnowledgeRefreshTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_only_explicitly_approved_repositories_are_ingested(self) -> None:
+        from services.public_knowledge_refresh import configured_sources
+        with patch.dict("os.environ", {"NEXO_PUBLIC_GITHUB_REPOSITORIES": "OMNIX,UNKNOWN,affan67dev/private"}, clear=False):
+            sources = configured_sources()
+        self.assertEqual([item.repository for item in sources], ["OMNIX"])
+
     def test_public_readme_is_ingested_with_metadata(self) -> None:
         readme = "# OMNIX\n\nOMNIX is a public project using Python and web technologies."
         response = FakeResponse(

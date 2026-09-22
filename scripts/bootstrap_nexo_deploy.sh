@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # One-time NEXO Termux deployment bootstrap.
 # It configures a lightweight 30-minute poller and records the current runtime
-# as the initial known-good release. It never manages omnix-backend.
+# as the initial known-good release. It never manages omnix-backend or starts a local LLM.
 
 REPO_DIR="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 STATE_DIR="${HOME}/.nexo/deploy"
@@ -23,12 +23,9 @@ command -v crontab >/dev/null 2>&1 || fail "cronie/crontab is required"
 [[ -d "$REPO_DIR/.git" ]] || fail "NEXO repository root not found"
 [[ "$(git -C "$REPO_DIR" config --get remote.origin.url || true)" == *"affan67dev/NEXO-MANAGER-"* ]] || fail "unexpected Git remote"
 [[ -f "$REPO_DIR/scripts/auto_update.sh" ]] || fail "auto_update.sh missing"
-[[ -f "$HOME/NEXO/start_llama_tablet.sh" ]] || fail "~/NEXO/start_llama_tablet.sh missing"
 [[ -f "$HOME/NEXO/start_nexo_tablet.sh" ]] || fail "~/NEXO/start_nexo_tablet.sh missing"
 
 pm2 describe nexo-backend >/dev/null 2>&1 || fail "PM2 process nexo-backend not found"
-pm2 describe nexo-llama >/dev/null 2>&1 || fail "PM2 process nexo-llama not found"
-
 # Refuse to overwrite tracked local work.
 [[ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]] || fail "tracked local changes detected"
 
@@ -62,7 +59,7 @@ chmod +x "$REPO_DIR/scripts/auto_update.sh"
 say "NEXO safe deployment bootstrap: PASS"
 say "Known-good SHA: $CURRENT_SHA"
 say "Poll interval: 30 minutes"
-say "Managed PM2 processes: nexo-backend, nexo-llama"
+say "Managed PM2 process: nexo-backend (hosted LLM runtime)"
 say "Runtime data remains outside Git release tracking"
 say "No OMNIX process is managed"
 say "Scheduler installed; no further activation command is required."
