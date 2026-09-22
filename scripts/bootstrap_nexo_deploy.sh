@@ -26,8 +26,6 @@ command -v crontab >/dev/null 2>&1 || fail "cronie/crontab is required"
 [[ -f "$HOME/NEXO/start_nexo_tablet.sh" ]] || fail "~/NEXO/start_nexo_tablet.sh missing"
 
 pm2 describe nexo-backend >/dev/null 2>&1 || fail "PM2 process nexo-backend not found"
-pm2 describe nexo-llama >/dev/null 2>&1 || fail "PM2 process nexo-llama not found"
-
 # Refuse to overwrite tracked local work.
 [[ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]] || fail "tracked local changes detected"
 
@@ -61,7 +59,7 @@ chmod +x "$REPO_DIR/scripts/auto_update.sh"
 say "NEXO safe deployment bootstrap: PASS"
 say "Known-good SHA: $CURRENT_SHA"
 say "Poll interval: 30 minutes"
-say "Managed PM2 compatibility processes: nexo-backend, nexo-llama"
+say "Managed PM2 process: nexo-backend (hosted LLM runtime)"
 say "Runtime data remains outside Git release tracking"
 say "No OMNIX process is managed"
 say "Scheduler installed; no further activation command is required."
