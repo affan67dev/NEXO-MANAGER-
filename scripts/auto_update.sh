@@ -29,12 +29,9 @@ write_state() { printf '%s\n' "$2" > "${STATE_DIR}/$1"; }
 pm2_ok() {
   command -v pm2 >/dev/null 2>&1 || return 1
   pm2 describe nexo-backend >/dev/null 2>&1 || return 1
-  pm2 describe nexo-llama >/dev/null 2>&1 || return 1
-  local statuses
-  statuses="$(pm2 jlist 2>/dev/null | python -c 'import json,sys; d=json.load(sys.stdin); names={p.get("name"):p.get("pm2_env",{}).get("status") for p in d}; print(names.get("nexo-backend",""),names.get("nexo-llama",""))' 2>/dev/null || true)"
-  [[ "$statuses" == "online online" ]]
+  pm2 describe nexo-backend >/dev/null 2>&1
 }
-restart_nexo() { pm2 describe nexo-backend >/dev/null 2>&1 && pm2 describe nexo-llama >/dev/null 2>&1 && pm2 restart nexo-backend nexo-llama --update-env >/dev/null; }
+restart_nexo() { pm2 describe nexo-backend >/dev/null 2>&1 && pm2 restart nexo-backend --update-env >/dev/null; }
 
 hosted_config_ok() {
   python - <<'PY'
