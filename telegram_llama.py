@@ -14,6 +14,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
+from core.security_policy import load_policy_bundle
 from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.portfolio_store import retrieve_knowledge
