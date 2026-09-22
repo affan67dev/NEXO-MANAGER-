@@ -67,27 +67,24 @@ class TelegramStartupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(telegram_llama._post_init))
         self.assertTrue(callable(telegram_llama._post_shutdown))
 
-    def test_main_wires_scheduler_to_application_lifecycle(self):
+    def test_builder_binds_scheduler_hooks_only_to_admin_bot(self):
         import telegram_llama
 
-        fake_app = MagicMock()
         fake_builder = MagicMock()
         for method in ("token", "concurrent_updates", "update_queue", "post_init", "post_shutdown"):
             getattr(fake_builder, method).return_value = fake_builder
-        fake_builder.build.return_value = fake_app
+        fake_builder.build.return_value = MagicMock()
 
-        with patch.object(telegram_llama, "TOKEN", "test-token"), patch.object(
-            telegram_llama.Application, "builder", return_value=fake_builder
-        ), patch.object(telegram_llama.scheduler, "start") as start, patch.object(
-            telegram_llama.scheduler, "stop"
-        ) as stop:
-            telegram_llama.main()
+        with patch.object(telegram_llama.Application, "builder", return_value=fake_builder):
+            telegram_llama._build_application("test-token", "admin")
+            fake_builder.post_init.assert_called_once_with(telegram_llama._post_init)
+            fake_builder.post_shutdown.assert_called_once_with(telegram_llama._post_shutdown)
 
-        fake_builder.post_init.assert_called_once_with(telegram_llama._post_init)
-        fake_builder.post_shutdown.assert_called_once_with(telegram_llama._post_shutdown)
-        fake_app.run_polling.assert_called_once_with(drop_pending_updates=True)
-        start.assert_not_called()
-        stop.assert_not_called()
+        fake_builder.reset_mock()
+        with patch.object(telegram_llama.Application, "builder", return_value=fake_builder):
+            telegram_llama._build_application("test-token", "public")
+            fake_builder.post_init.assert_called_once_with(None)
+            fake_builder.post_shutdown.assert_called_once_with(None)
 
 
 if __name__ == "__main__":

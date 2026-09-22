@@ -37,8 +37,8 @@ class DeploymentSafetyTests(unittest.TestCase):
     def test_bootstrap_uses_thirty_minute_schedule(self):
         text = BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn("*/30 * * * *", text)
-        self.assertIn("start_llama_tablet.sh", text)
         self.assertIn("start_nexo_tablet.sh", text)
+        self.assertNotIn("start_llama_tablet.sh", text)
 
 
 if __name__ == "__main__":
