@@ -283,8 +283,8 @@ def _build_application(token: str, bot_role: str) -> Application:
         .token(token)
         .concurrent_updates(False)
         .update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE))
-        .post_init(_post_init)
-        .post_shutdown(_post_shutdown)
+        .post_init(_post_init if bot_role == "admin" else None)
+        .post_shutdown(_post_shutdown if bot_role == "admin" else None)
         .build()
     )
     handler = partial(chat, bot_role=bot_role)
@@ -305,12 +305,14 @@ async def _run_bots() -> None:
             await application.start()
             await application.updater.start_polling(drop_pending_updates=True)
         # Manual startup does not invoke PTB's post_init callback. Invoke the
-        # registered lifecycle hook explicitly after initialization and before
-        # polling work; scheduler.start() itself is idempotent.
-        await _post_init(admin)
+        # application-registered lifecycle callback exactly once for the shared
+        # scheduler after initialization and before polling work.
+        if admin.post_init is not None:
+            await admin.post_init(admin)
         await asyncio.Event().wait()
     finally:
-        await _post_shutdown(admin)
+        if admin.post_shutdown is not None:
+            await admin.post_shutdown(admin)
         for application in reversed(applications):
             if application.updater and application.updater.running:
                 await application.updater.stop()
