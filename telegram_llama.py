@@ -33,7 +33,7 @@ if ENV_FILE.exists():
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()
 PUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
+OWNER_RAW = (os.getenv("ADMIN_TELEGRAM_USER_ID", "").strip() or os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip())
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
 SYSTEM = load_policy_bundle()
