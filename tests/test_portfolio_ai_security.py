@@ -93,6 +93,38 @@ class PortfolioAIHostedTests(unittest.TestCase):
         self.assertNotIn("provider_down", result["answer"])
 
 
+
+
+class TelegramAuthorizationTests(unittest.TestCase):
+    def test_server_derived_admin_identity(self):
+        from core.identity import authorize_bot_update, resolve_bot_identity
+        with patch.dict("os.environ", {"ADMIN_TELEGRAM_USER_ID": "42", "NEXO_OWNER_TELEGRAM_USER_ID": "999"}, clear=False):
+            self.assertTrue(authorize_bot_update("admin", 42))
+            self.assertFalse(authorize_bot_update("admin", 99))
+            self.assertTrue(resolve_bot_identity("admin", 42).is_admin)
+
+    def test_public_bot_never_inherits_admin_role(self):
+        from core.identity import resolve_bot_identity
+        with patch.dict("os.environ", {"ADMIN_TELEGRAM_USER_ID": "42"}, clear=False):
+            identity = resolve_bot_identity("public", 42)
+            self.assertFalse(identity.is_admin)
+            self.assertEqual(identity.role, "public_client")
+
+    def test_message_text_cannot_self_promote(self):
+        from core.identity import resolve_bot_identity
+        with patch.dict("os.environ", {"ADMIN_TELEGRAM_USER_ID": "42"}, clear=False):
+            identity = resolve_bot_identity("public", 99)
+            self.assertFalse(identity.is_admin)
+            self.assertEqual(identity.role, "public_client")
+
+    def test_privileged_tool_schemas_are_hidden_from_public(self):
+        from tool_registry import schemas
+        public_names = {item["function"]["name"] for item in schemas(include_owner_only=False)}
+        all_names = {item["function"]["name"] for item in schemas(include_owner_only=True)}
+        self.assertIn("device_action", all_names)
+        self.assertNotIn("device_action", public_names)
+
+
 class RequestContextTests(unittest.TestCase):
     def test_telegram_owner_scope_is_server_derived(self):
         self.assertEqual(RequestContext.telegram(42, "admin").scope, "owner_admin")
