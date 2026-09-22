@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+from urllib.parse import urlparse
 from typing import Any, Protocol
 
 import httpx
@@ -57,6 +58,9 @@ class LLMConfig:
             raise RuntimeError("llm_model_not_configured")
         if not base_url:
             raise RuntimeError("llm_base_url_not_configured")
+        parsed = urlparse(base_url)
+        if parsed.scheme != "https" or parsed.hostname not in {"openrouter.ai", "eu.openrouter.ai"} or parsed.path.rstrip("/") != "/api/v1":
+            raise RuntimeError("llm_base_url_invalid")
         return cls(
             provider=provider,
             api_key=api_key,
