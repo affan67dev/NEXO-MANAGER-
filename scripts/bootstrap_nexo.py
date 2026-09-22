@@ -22,7 +22,7 @@ MVB_MANIFEST = REPO / "requirements-nexo-mvb.txt"
 FULL_MANIFEST = REPO / "requirements-nexo.txt"
 # Historical PM2 process names are preserved for Termux compatibility. The
 # repository no longer assumes that the second process is a local LLM server.
-PM2_NAMES = ("nexo-backend", "nexo-llama")
+PM2_NAMES = ("nexo-backend",)
 TERMUX_COMMANDS = (
     "termux-speech-to-text", "termux-microphone-record", "termux-tts-speak",
     "termux-toast", "termux-screenshot", "termux-battery-status",
@@ -197,7 +197,7 @@ def install_autostart_hook() -> bool:
     end = "# <<< NEXO ALEX AUTOSTART <<<"
     block = (
         f"\n{marker}\n"
-        f'if [ "[object Object]" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
+        'if [ "$NEXO_ALEX_AUTOSTART" = "true" ] && [ ! -f "$HOME/.nexo/run/autostart.disabled" ]; then\n'
         f'  alex start >/dev/null 2>&1 || true\n'
         f"fi\n{end}\n"
     )
