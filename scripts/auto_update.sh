@@ -24,8 +24,6 @@ cd "$REPO_DIR"
 state() { cat "${STATE_DIR}/$1" 2>/dev/null || true; }
 write_state() { printf '%s\n' "$2" > "${STATE_DIR}/$1"; }
 
-# nexo-llama is a historical PM2 process name retained for Termux compatibility.
-# It is not treated here as evidence of a local LLM server.
 pm2_ok() {
   command -v pm2 >/dev/null 2>&1 || return 1
   pm2 describe nexo-backend >/dev/null 2>&1 || return 1
