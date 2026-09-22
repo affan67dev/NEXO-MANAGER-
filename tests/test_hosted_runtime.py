@@ -36,6 +36,13 @@ class HostedKnowledgeRuntimeTests(unittest.TestCase):
         result = retrieve_knowledge("OMNIX private admin detail", channel="telegram", scope="owner_admin", db_path=self.db)
         self.assertTrue(any(item["visibility"] == "private" for item in result))
 
+    def test_bootstrap_scripts_have_no_local_llm_dependency(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative in ("scripts/bootstrap_nexo.py", "scripts/auto_update.sh", "scripts/bootstrap_nexo_deploy.sh"):
+            text = (root / relative).read_text(encoding="utf-8")
+            for marker in ("LLAMA_SERVER", "NEXO_MODEL_PATH", "llama-server", "127.0.0.1:8080", "GGUF"):
+                self.assertNotIn(marker, text, f"{relative}: {marker}")
+
     def test_telegram_model_context_is_bounded(self):
         messages = build_llm_messages("Tell me about OMNIX", [], "", "PUBLIC KNOWLEDGE")
         self.assertIn("Authorized NEXO knowledge", " ".join(m["content"] for m in messages if m.get("role") == "system"))

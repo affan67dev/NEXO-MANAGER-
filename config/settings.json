@@ -1,9 +1,7 @@
 {
   "assistant_name": "ALEX",
-  "model_backend": "openrouter",
+  "model_backend": "hosted",
   "llm_provider": "openrouter",
-  "local_llama_optional": true,
-  "local_model_path": "",
   "context_size": 4096,
   "max_tokens": 512,
   "temperature": 0.15,

@@ -1,57 +1,70 @@
-# NEXO Safe Pull Deployment
+# NEXO Safe Deployment
 
-NEXO uses a local pull-based deployment on the Termux tablet.
+The supported runtime is the hosted OpenRouter architecture.
 
-Flow:
-
-`GitHub main push -> NEXO CI PASS -> tablet SHA polling (30 min) -> immutable release worktree -> local tests -> tracked-file runtime sync -> restart nexo-backend + nexo-llama -> health check -> fast-forward main`
-
-## One-time activation
-
-From the tablet, after pulling this repository version:
-
-```bash
-bash ~/NEXO/scripts/bootstrap_nexo_deploy.sh
+```text
+GitHub change
+  → NEXO CI
+  → human review
+  → immutable release
+  → deploy hosted ALEX runtime
+  → health verification
 ```
 
-The bootstrap verifies the Termux environment, repository identity, required PM2 processes, existing tablet startup scripts, and a clean tracked working tree. It records the current commit as the initial known-good release and installs one cron entry at `*/30 * * * *`.
+## Runtime boundary
 
-## Safety model
+Deployment manages the ALEX/NEXO application service only. It must not start, discover, download, or depend on local model servers or model files.
 
-- No `git reset --hard`.
-- No `git clean`.
-- No forced checkout.
+The release file set excludes:
+
+- `.env` and `.nexo.env`;
+- SQLite runtime databases where deployment policy excludes them;
+- model files;
+- logs;
+- credentials and secrets.
+
+## Safety gates
+
 - No force push.
-- Local tracked changes block automatic deployment.
-- `.env`, SQLite files, GGUF models, logs, secrets and credentials remain outside the release file set.
-- Release candidates are immutable detached Git worktrees under `~/.nexo/deploy/releases/`.
-- Only tracked files are synchronized into the runtime checkout.
-- Git history advances only with `git merge --ff-only` after runtime health succeeds.
-- A failed deployment gets one rollback attempt to the previous known-good release.
-- An interrupted transaction is recovered on the next poll before a new deployment is attempted.
-- Only `nexo-backend` and `nexo-llama` are restarted. `omnix-backend` is never referenced by the deployment scripts.
+- No automatic merge.
+- No deployment from a dirty tracked worktree.
+- CI must pass before release promotion.
+- Runtime health must be verified after deployment.
+- Failed health checks must not be reported as successful deployment.
+- Provider/API credentials remain server-side.
 
-## CI gate
+## Portfolio API
 
-The poller checks the GitHub Actions workflow named `NEXO CI` for the exact target SHA. A deployment is not attempted until that workflow has completed successfully.
+The public Portfolio API is a separate FastAPI entrypoint:
 
-## Dependency policy
+```text
+HTTPS Portfolio Website
+        ↓
+portfolio_api.py
+        ↓
+public_portfolio RequestContext
+        ↓
+Portfolio policy + public knowledge
+        ↓
+ExecutivePlanner → LLMRouter → OpenRouterProvider
+```
 
-Python dependencies are not reinstalled when dependency manifests are unchanged. If a dependency manifest changes, the deployment uses the repository's `requirements-nexo.txt` before restarting NEXO.
+Production configuration must define an exact HTTPS CORS origin and a server-side Portfolio session secret.
 
-## Logs and state
+## Public knowledge
 
-Deployment state and logs live under:
+Public GitHub README ingestion is an allowlisted knowledge-refresh operation. It is not a live activity feed.
 
-`~/.nexo/deploy/`
+Only explicitly public repositories are eligible, and the resulting documents are stored under the `public_portfolio` scope.
 
-The repository itself is not used to store runtime secrets or model/database state.
+## Verification
 
-## Important runtime boundary
+A release is not complete until:
 
-The tablet already owns the PM2 runtime configuration and the startup scripts:
+1. CI has an actual successful result.
+2. Syntax/import checks pass.
+3. Complete unit tests pass.
+4. Runtime health is verified.
+5. The hosted provider is reachable using server-side credentials.
+6. No local-model dependency has been introduced.
 
-- `~/NEXO/start_llama_tablet.sh`
-- `~/NEXO/start_nexo_tablet.sh`
-
-The deployment system deliberately does not rewrite those scripts or create a second PM2 configuration. It updates the tracked application files in place, then restarts the existing NEXO process names.
