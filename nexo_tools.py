@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import app_router
 from core.memory_engine import save_memory
+from core.memory_governance import MemoryCandidate, propose
 from core.semantic_memory import memory
 from core.operational_history import record_event, search_events
 from services.intelligence.tavily import search as tavily_search
 from services.self_healing import health_report
 from services.github_safe import status as git_status
 from tools.device import run as device_run
-from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, toast_state
+from android_capabilities import analyze_screen, capabilities as android_capabilities, capture_screen, inspect_ui_tree, semantic_ui_action, toast_state
 from tool_registry import Tool, register
 
 MAX_QUERY_CHARS = 2000
@@ -35,10 +36,14 @@ def _memory_search(query: str, limit: int = 5, user_id: int | str | None = None)
 
 def _memory_add(content: str, category: str = "general", importance: int = 5, user_id: int | str | None = None) -> dict:
     content = _bounded_text(content, MAX_MEMORY_CHARS)
-    if not content: return {"ok": False, "error": "empty_memory", "verified": False}
-    if not save_memory(category, content, importance, "assistant", user_id=user_id): return {"ok": False, "error": "memory_rejected", "verified": False}
-    if not memory.add(content, category, importance, "assistant", user_id=user_id): return {"ok": False, "error": "semantic_memory_rejected", "verified": False}
-    return {"ok": True, "verified": True}
+    if user_id is None:
+        return {"ok": False, "error": "authenticated_user_required", "verified": False}
+    if not content:
+        return {"ok": False, "error": "empty_memory", "verified": False}
+    candidate_id = propose(MemoryCandidate(str(user_id), content, category, "assistant", importance))
+    if candidate_id is None:
+        return {"ok": False, "error": "memory_candidate_rejected", "verified": False}
+    return {"ok": True, "verified": True, "candidate_id": candidate_id, "status": "pending_approval"}
 
 def _web_search(query: str, max_results: int = 5, user_id: int | str | None = None) -> dict:
     result=tavily_search(_bounded_text(query,MAX_QUERY_CHARS),max_results); result.setdefault("verified",bool(result.get("ok"))); return result
@@ -54,6 +59,12 @@ def _screen_capture(user_id: int | str | None = None) -> dict:
 
 def _screen_analyze(user_id: int | str | None = None) -> dict:
     return analyze_screen()
+
+def _ui_tree(user_id: int | str | None = None) -> dict:
+    return inspect_ui_tree()
+
+def _ui_action(action: str, target: str = "", text: str = "", user_id: int | str | None = None) -> dict:
+    return semantic_ui_action(action, _bounded_text(target, 500), _bounded_text(text, 2000))
 
 def _android_capabilities(user_id: int | str | None = None) -> dict:
     return {"ok": True, "verified": True, "capabilities": android_capabilities()}
@@ -81,7 +92,7 @@ def register_all() -> None:
     register(Tool("device_action","Perform one approved Android device action.",{"type":"object","properties":{"action":{"type":"string","enum":["wifi_on","wifi_off","torch_on","torch_off","battery"]}},"required":["action"],"additionalProperties":False},_device,risk="high"))
     register(Tool("android_capabilities","Report actual available Termux:API capabilities.",{"type":"object","properties":{},"additionalProperties":False},_android_capabilities,owner_only=False,risk="low"))
     register(Tool("screen_capture","Capture the current Android screen through Termux:API; never fakes availability.",{"type":"object","properties":{},"additionalProperties":False},_screen_capture,owner_only=True,risk="medium"))
-    register(Tool("screen_analyze","Capture and OCR/analyze the current Android screen; reports unavailable analysis explicitly.",{"type":"object","properties":{},"additionalProperties":False},_screen_analyze,owner_only=True,risk="medium"))
+    register(Tool("screen_analyze","Capture and OCR/analyze the current Android screen; reports unavailable analysis explicitly.",{"type":"object","properties":{},"additionalProperties":False},_screen_analyze,owner_only=True,risk="medium"))\n    register(Tool("ui_tree_inspect","Inspect the current Android accessibility/UI tree when the device exposes uiautomator.",{"type":"object","properties":{},"additionalProperties":False},_ui_tree,owner_only=True,risk="medium"))\n    register(Tool("ui_action","Perform a bounded semantic Android UI action such as click, type, back, or scroll.",{"type":"object","properties":{"action":{"type":"string","enum":["click","type","back","scroll"]},"target":{"type":"string","maxLength":500},"text":{"type":"string","maxLength":2000}},"required":["action"],"additionalProperties":False},_ui_action,owner_only=True,risk="medium"))
     register(Tool("voice_indicator","Show the minimal ALEX voice state indicator when Termux toast is available.",{"type":"object","properties":{"state":{"type":"string","enum":["IDLE","LISTENING","PROCESSING","SPEAKING"]}},"required":["state"],"additionalProperties":False},_voice_indicator,owner_only=True,risk="low"))
     register(Tool("operational_history_search","Query verified ALEX/NEXO operational history from the existing SQLite memory database.",{"type":"object","properties":{"query":{"type":"string","maxLength":500},"limit":{"type":"integer","minimum":1,"maximum":20}},"additionalProperties":False},_history_search,owner_only=True,risk="low"))
     register(Tool("operational_history_add","Record a non-sensitive operational event in the existing SQLite memory database.",{"type":"object","properties":{"event_type":{"type":"string","minLength":1,"maxLength":100},"details":{"type":"string","minLength":1,"maxLength":4000}},"required":["event_type","details"],"additionalProperties":False},_history_add,owner_only=True,risk="low"))
