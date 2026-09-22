@@ -27,6 +27,7 @@ TERMUX_COMMANDS = (
     "termux-speech-to-text", "termux-microphone-record", "termux-tts-speak",
     "termux-toast", "termux-screenshot", "termux-battery-status",
 )
+VOICE_TERMUX_COMMANDS = ("termux-speech-to-text", "termux-tts-speak", "termux-toast")
 
 
 def is_termux() -> bool:
@@ -59,6 +60,22 @@ def hardware() -> dict[str, object]:
         "python": platform.python_version(), "cpu_count": os.cpu_count() or 1,
         "ram_bytes": _detect_ram_bytes(), "gpu": [], "termux": is_termux(),
     }
+
+
+def find_model() -> str | None:
+    """Hosted runtime compatibility hook; local model discovery is intentionally disabled."""
+    return None
+
+
+def ready_mode(missing_env: list[str]) -> tuple[bool, list[str]]:
+    failures = list(f"configuration missing: {key}" for key in missing_env)
+    if os.getenv("LLM_PROVIDER", "").strip().lower() != "openrouter":
+        failures.append("LLM_PROVIDER must be openrouter")
+    if not os.getenv("LLM_API_KEY", "").strip():
+        failures.append("LLM_API_KEY is not configured")
+    if not os.getenv("LLM_MODEL", "").strip():
+        failures.append("LLM_MODEL is not configured")
+    return not failures, failures
 
 
 def init_sqlite() -> None:
@@ -217,6 +234,7 @@ def main() -> int:
     parser.add_argument("--no-install", action="store_true")
     parser.add_argument("--full-deps", action="store_true", help="install the full dependency manifest; not recommended for Android MVB")
     parser.add_argument("--enable-autostart", action="store_true")
+    parser.add_argument("--ready", action="store_true", help="validate hosted runtime configuration")
     args = parser.parse_args()
     if not (REPO / ".git").exists():
         print("ERROR: run from a NEXO checkout", file=sys.stderr)
@@ -267,6 +285,12 @@ def main() -> int:
     print(f"PM2 compatibility state: {pm2}")
     print(f"ALEX command: {'installed as alex' if alex_command else 'use python scripts/alexctl.py'}")
     print(f"Autostart: {'enabled' if autostart else 'not changed'}")
+    if args.ready:
+        ready, failures = ready_mode(missing_env)
+        if not ready:
+            for failure in failures:
+                print(f"  - {failure}")
+            return 1
     print(f"Setup state: {CONFIG}")
     return 0
 
