@@ -24,7 +24,7 @@ SENSITIVE = re.compile(
 PORTFOLIO_TERMS = re.compile(
     r"(?i)\b(affan|portfolio|project|projects|omnix|nexo|alex|picsync|ajentic(?:-ai-model)?|journey|github|software|ai|artificial intelligence|development|developer|technology|technologies|stack|website|coding|programming|qwen|local ai)\b"
 )
-PRIVATE_DATA = re.compile(r"(?i)\b(private|secret|hidden|confidential)\b.*\b(telegram|conversation|chat|message|memory|repo|repository|database|file|system)\b|\b(telegram|conversation|chat|message|memory|repo|repository|database|file|system)\b.*\b(private|secret|hidden|confidential)\b")
+PRIVATE_DATA = re.compile(r"(?i)\b(private\w*|secret\w*|hidden\w*|confidential\w*)\b.*\b(telegram|conversation|chat|message|memory|repo|repository|database|file|system)\b|\b(telegram|conversation|chat|message|memory|repo|repository|database|file|system)\b.*\b(private\w*|secret\w*|hidden\w*|confidential\w*)\b")
 EXECUTION_REQUEST = re.compile(r"(?i)\b(shell|terminal|command line|execute|run a command|arbitrary code|code execution)\b")
 TELEGRAM_ONLY = re.compile(r"(?i)\b(owner|admin|administrator|private|internal|server|database|logs|runtime|telegram bot|maintenance|system health)\b")
 
