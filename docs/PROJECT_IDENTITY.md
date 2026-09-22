@@ -2,54 +2,43 @@
 
 ## Project
 
-**NEXO-MANAGER** is a local-first Python AI assistant runtime created and maintained by **AFFAN MIR (`affan67dev`)**.
+**NEXO-MANAGER** is a Python AI orchestration runtime whose active user-facing identity is **ALEX**.
 
-It is designed around a local LLM, Telegram interaction, controlled tools, memory, security boundaries, planning, health checks, and safe deployment workflows.
+The production path is provider-agnostic at the orchestration boundary but currently configured for:
 
-## Who built it
+**ALEX → Executive Planner/Router → Hosted LLM Provider → OpenRouter → configured hosted model → registered tools/execution.**
 
-NEXO-MANAGER is an independent developer project by AFFAN MIR (`affan67dev`). This repository documents the software, architecture, experiments, implementation decisions, and ongoing engineering work.
+NEXO remains as an internal architectural and compatibility name. It is not a separate local-model runtime.
 
-The profile intentionally focuses on the work rather than publishing unnecessary personal information.
-
-## What makes NEXO different
-
-NEXO is not intended to be only a chat interface. Its architecture separates model reasoning from backend authority:
+## Core principles
 
 > **The model reasons. The backend controls. Policy authorizes. Registered tools execute. Runtime evidence verifies.**
 
 The system combines:
 
-- local LLM inference through an OpenAI-compatible endpoint;
-- Telegram as an interaction layer;
+- Telegram and future channel boundaries;
+- executive planning and routing;
+- hosted LLM transport;
 - SQLite-backed session/conversation memory;
 - optional semantic memory;
 - security and permission gates;
 - validated registered tools;
-- an executive planning layer;
-- health checks and load control;
-- cross-platform bootstrap support;
+- health/configuration checks;
 - CI verification;
-- safe Termux deployment with bounded rollback.
+- safe Termux deployment.
 
-## Searchable project identity
+## Compatibility
 
-Useful terms for finding this project include:
+The historical file name `telegram_llama.py`, internal NEXO module names, and selected legacy role/template names may remain because they are compatibility surfaces. They do not mean the active runtime uses local LLaMA inference.
 
-**NEXO-MANAGER, NEXO Manager, AFFAN MIR, affan67dev, local-first AI assistant, local LLM assistant, Telegram AI assistant, Llama Telegram bot, Python AI agent runtime, SQLite AI memory, semantic memory, AI security gates, permission-controlled AI tools, Termux AI assistant, Android local LLM, llama-server, safe AI deployment, CI rollback.**
+## Local-model policy
 
-These terms describe the actual project and are provided for clarity, not as a claim that search engines will rank the repository for every query.
+The active runtime does not require, start, download, load, or silently fall back to local LLaMA, DeepSeek, or Qwen models. Future model abstractions may remain, but no local model routing is active.
 
 ## Repository
 
-The canonical source code is this GitHub repository:
-
 `https://github.com/affan67dev/NEXO-MANAGER-`
 
-## Developer profile
+## Developer
 
-The developer's public GitHub profile is:
-
-`https://github.com/affan67dev`
-
-For the current developer profile and project links, see the profile README in `affan67dev/affan67dev`.
+AFFAN MIR (`affan67dev`)
