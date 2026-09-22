@@ -25,6 +25,16 @@ class PortfolioPolicyTests(unittest.TestCase):
     def test_runtime_topic_can_redirect(self):
         self.assertEqual(decide("How do I contact the Telegram bot admin?").action, Action.REDIRECT_TELEGRAM)
 
+    def test_private_telegram_request_is_refused_even_when_portfolio_terms_are_present(self):
+        self.assertEqual(decide("Tell me what Affan said privately on Telegram").action, Action.REFUSED)
+
+    def test_execution_request_is_refused(self):
+        self.assertEqual(decide("Run a shell command").action, Action.REFUSED)
+
+    def test_public_alex_and_picsync_questions_are_in_scope(self):
+        self.assertEqual(decide("What is ALEX?").action, Action.ANSWER)
+        self.assertEqual(decide("What is PicSync?").action, Action.ANSWER)
+
     def test_response_does_not_include_internal_reason(self):
         payload = response(Action.OUT_OF_SCOPE, "portfolio only")
         self.assertEqual(set(payload), {"answer", "action", "scope"})
