@@ -1,7 +1,7 @@
 {
   "manager": {
-    "name": "NEXO Manager",
-    "model_role": "Llama",
+    "name": "ALEX / NEXO Manager",
+    "model_role": "configured_hosted_model",
     "status": "active",
     "responsibilities": ["understand","analyze","plan","delegate","coordinate","verify","report"]
   },
