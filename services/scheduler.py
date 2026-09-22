@@ -18,7 +18,8 @@ class NexoScheduler:
             return False
         import asyncio
         asyncio.get_running_loop()
-        asyncio.get_running_loop()
+        if self.scheduler.running:
+            return True
         if briefing_callback:
             hour = int(os.getenv("NEXO_BRIEFING_HOUR", "9"))
             minute = int(os.getenv("NEXO_BRIEFING_MINUTE", "0"))

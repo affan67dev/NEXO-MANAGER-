@@ -101,9 +101,9 @@ The following are implemented in the current repository.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Local LLM inference | Implemented | NEXO talks to an already-running OpenAI-compatible local endpoint. |
-| Llama integration | Implemented | Default endpoint is `http://127.0.0.1:8080/v1/chat/completions`. |
-| Optional Qwen fallback | Implemented | Opt-in secondary endpoint; no second model is started automatically. |
+| Hosted LLM inference | Implemented | NEXO routes production reasoning through the configured OpenRouter provider. |
+| Hosted provider | Implemented | OpenRouter is the active provider boundary. |
+| Hosted fallback configuration | Implemented | Optional OpenRouter fallback model IDs are server-side configuration; no local-model fallback exists. |
 | Telegram interface | Implemented | `telegram_llama.py` uses `python-telegram-bot` and polling. |
 | SQLite memory | Implemented | Session/conversation memory uses `data/memory.db`. |
 | Semantic memory | Implemented | ChromaDB-backed semantic memory is optional at runtime and falls back to SQLite search. |
@@ -175,9 +175,9 @@ pytesseract
 
 The bootstrap installs this manifest only when its SHA256 marker shows that the manifest has changed or has not been installed in the desktop setup environment.
 
-## Local LLM runtime
+## Hosted LLM runtime
 
-NEXO expects an **already-running OpenAI-compatible LLM HTTP endpoint**. The default Llama endpoint is:
+The active production runtime uses a **hosted OpenRouter provider** configured through `~/.nexo.env`. The provider base URL is configured through `LLM_BASE_URL` and is not hard-coded to a local model server.
 
 ```text
 http://127.0.0.1:8080/v1/chat/completions
@@ -187,11 +187,11 @@ The bootstrap can detect an existing `llama-server` in `PATH`, `~/llama.cpp/buil
 
 It does **not** automatically download a GGUF model or build/install llama.cpp.
 
-## GGUF model
+## Local-model policy
 
-The bootstrap looks for a configured `.gguf` file and, when appropriate, checks these locations:
+The active runtime does not require a GGUF model or local model server. Historical model names may remain only as compatibility references.
 
-- `NEXO_MODEL_PATH`
+- `LLM_MODEL`
 - `models/` inside the repository
 - `~/models`
 - `/sdcard/Download` on Termux
@@ -438,7 +438,7 @@ The repository does not provide a macOS launch daemon/service definition, so the
 - **Python too old:** use Python 3.10+.
 - **Dependency failure:** check package installation output and network access.
 - **llama-server not detected:** configure/use an existing compatible `llama-server` installation; the bootstrap does not build it for you.
-- **Model not detected:** configure `NEXO_MODEL_PATH` to an existing `.gguf` file.
+- **Model not detected:** configure `LLM_MODEL` to an existing `.gguf` file.
 
 ---
 
@@ -527,9 +527,9 @@ At runtime, `telegram_llama.py` performs load control, input inspection, securit
 
 # Model setup
 
-## Llama
+## OpenRouter
 
-NEXO's primary model interface is an OpenAI-compatible local HTTP endpoint configured with:
+NEXO's primary model interface is the configured hosted OpenRouter API.
 
 ```text
 LLAMA_URL=http://127.0.0.1:8080/v1/chat/completions
@@ -555,9 +555,9 @@ NEXO_MODEL_PATH=/path/to/model.gguf
 
 Use a real local path for your machine. Do not commit model files to Git; `.gitignore` excludes `*.gguf`.
 
-## Qwen
+## Hosted fallback models
 
-Qwen is an **optional secondary endpoint**, not a mandatory second model.
+OpenRouter fallback model IDs are optional server-side configuration via `LLM_FALLBACK_MODELS`; they are hosted models and are never executed locally.
 
 Configuration:
 
@@ -636,9 +636,9 @@ Never commit the real file.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot authentication | `<telegram-token>` |
 | `NEXO_OWNER_TELEGRAM_USER_ID` | Owner/privileged Telegram identity | `<telegram-user-id>` |
-| `LLAMA_URL` | Primary OpenAI-compatible LLM endpoint | `http://127.0.0.1:8080/v1/chat/completions` |
-| `NEXO_MODEL_PATH` | Optional explicit GGUF path for bootstrap detection | `/path/to/model.gguf` |
-| `NEXO_QWEN_FALLBACK_ENABLED` | Enables optional Qwen routing | `false` |
+| `LLM_BASE_URL` | Primary OpenAI-compatible LLM endpoint | `http://127.0.0.1:8080/v1/chat/completions` |
+| `LLM_MODEL` | Optional explicit GGUF path for bootstrap detection | `/path/to/model.gguf` |
+| `LLM_FALLBACK_MODELS` | Enables optional Qwen routing | `false` |
 | `NEXO_QWEN_URL` | Secondary Qwen endpoint | `<local-qwen-endpoint>` |
 | `NEXO_QWEN_COMPLEXITY_CHARS` | Complexity threshold | `3500` |
 | `TAVILY_API_KEY` | Tavily/web-search configuration | `<tavily-key>` |
@@ -976,7 +976,7 @@ NEXO_MODEL_PATH=/path/to/model.gguf
 
 The bootstrap only detects the file; it does not download it.
 
-## Qwen unavailable
+## Hosted fallback models unavailable
 
 Qwen is optional. If it is disabled, NEXO stays on the primary Llama route.
 
@@ -992,7 +992,7 @@ Check that `~/.nexo.env` contains a valid local value. Never paste the real toke
 
 ## Port already in use
 
-The repository expects the default local LLM endpoint on port `8080`. Check which process is using that port using your operating system's normal process/network diagnostic tools, then reconcile the existing runtime configuration with `LLAMA_URL`.
+The repository expects the default local LLM endpoint on port `8080`. Check which process is using that port using your operating system's normal process/network diagnostic tools, then reconcile the existing runtime configuration with `LLM_BASE_URL`.
 
 Do not kill unrelated services blindly.
 
@@ -1280,3 +1280,11 @@ alex autostart-off
 On Android, `alex start` starts an idle ALEX daemon without opening the microphone. `alex wake` requests exactly one wake recognition attempt; after `Hey Alex`, ALEX enters the existing NEXO Manager execution path and stays active until the configured 30-second inactivity timeout. This is intentional: Termux speech-to-text is a one-shot speech recognizer, not a true always-on hotword engine. ALEX therefore does not fake continuous hotword detection or repeatedly open the microphone while IDLE.
 
 Physical Android verification must still be performed on the target tablet. CI validates the repository on Ubuntu, macOS and Windows but cannot prove Termux/Android hardware behavior.
+
+## Telegram two-bot security
+
+Admin and public Telegram traffic are separate security domains. The admin bot accepts only the server-configured `ADMIN_TELEGRAM_USER_ID`; the public bot always resolves to `public_client`, even for the admin's numeric Telegram ID. Unauthorized admin updates are rejected before load guard, context retrieval, storage, AI/provider execution, or tools.
+
+## Portfolio API security
+
+`/api/portfolio/session` and `/api/portfolio/chat` use exact configured origins, signed server-side session cookies, and bounded per-process rate limiting. The session secret is server-side only. The Portfolio-website repository is intentionally outside this repository.

@@ -6,6 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from functools import partial
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -13,11 +14,12 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from agents.executive_planner import ExecutivePlanner
 from core.gatekeeper import inspect as inspect_input
+from core.security_policy import load_policy_bundle
 from core.load_guard import load_guard
 from core.memory_engine import get_or_create_session, recent_turns, save_turn, prune_old_sessions
 from core.portfolio_store import retrieve_knowledge
 from core.request_context import RequestContext
-from core.identity import resolve_telegram_identity
+from core.identity import authorize_bot_update, configured_admin_id, resolve_bot_identity
 from core.router import create_task
 from core.semantic_memory import memory
 from services.document_parser import extract_text
@@ -30,8 +32,11 @@ import nexo_tools
 ENV_FILE = Path.home() / ".nexo.env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-OWNER_RAW = os.getenv("NEXO_OWNER_TELEGRAM_USER_ID", "").strip()
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()
+PUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_TELEGRAM_BOT_TOKEN", "").strip()
+PUBLIC_BOT_TOKEN = os.getenv("PUBLIC_TELEGRAM_BOT_TOKEN", "").strip()
+OWNER_RAW = configured_admin_id() or ""
 OWNER_TELEGRAM_USER_ID = int(OWNER_RAW) if OWNER_RAW.isdigit() else None
 SYSTEM_FILE = Path(__file__).with_name("system_prompt.txt")
 SYSTEM = load_policy_bundle()
@@ -176,12 +181,15 @@ async def handle_attachment(update: Update, user_id: int) -> str | None:
         Path(path).unlink(missing_ok=True)
 
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_role: str = "public"):
     global planner
     if not update.message:
         return
     user = update.effective_user
     if user is None:
+        return
+    if not authorize_bot_update(bot_role, user.id):
+        await update.message.reply_text("Sorry, I can't help with that.")
         return
     admitted, reason = await load_guard.acquire(user.id)
     if not admitted:
@@ -190,8 +198,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     typing_task = asyncio.create_task(typing_heartbeat(update))
     try:
-        identity = resolve_telegram_identity(user.id)
-        request_context = RequestContext.telegram(user.id, identity.role)
+        identity = resolve_bot_identity(bot_role, user.id)
+        request_context = RequestContext.telegram(user.id, bot_role)
         attachment_result = await handle_attachment(update, user.id)
         if attachment_result:
             await update.message.reply_text(attachment_result)
@@ -235,7 +243,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         knowledge = retrieve_knowledge(text, channel=request_context.channel, scope=request_context.scope, limit=5) if wants_knowledge else []
         knowledge_text = _knowledge_text(knowledge)
         messages = build_llm_messages(text, turns, memory_text, knowledge_text, include_history=wants_history, include_memory=wants_memory, include_knowledge=wants_knowledge)
-        tool_set = [] if manager_task.intent == "conversation" else schemas()
+        tool_set = [] if manager_task.intent == "conversation" else schemas(include_owner_only=identity.is_admin)
         logger.info("context_selection user_id=%s intent=%s history=%s memory=%s knowledge=%s history_candidates=%d", user.id, manager_task.intent, wants_history, wants_memory, wants_knowledge, len(turns))
         planner = planner or ExecutivePlanner()
         answer = await asyncio.to_thread(planner.run, text, messages, tool_set, execute_tool, owner=identity.is_admin, user_id=user.id, max_steps=1 if not tool_set else 6, intent=manager_task.intent)
@@ -270,24 +278,52 @@ async def _post_shutdown(application: Application) -> None:
     logger.info("NEXO Telegram scheduler stopped")
 
 
-def main() -> None:
-    global app
-    if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    app = (
+def _build_application(token: str, bot_role: str) -> Application:
+    application = (
         Application.builder()
-        .token(TOKEN)
+        .token(token)
         .concurrent_updates(False)
         .update_queue(asyncio.Queue(maxsize=MAX_UPDATE_QUEUE))
-        .post_init(_post_init)
-        .post_shutdown(_post_shutdown)
+        .post_init(_post_init if bot_role == "admin" else None)
+        .post_shutdown(_post_shutdown if bot_role == "admin" else None)
         .build()
     )
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, chat))
-    logger.info("NEXO unified Telegram runtime starting with hosted LLM provider")
-    app.run_polling(drop_pending_updates=True)
+    handler = partial(chat, bot_role=bot_role)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handler))
+    return application
 
 
-if __name__ == "__main__":
-    main()
+async def _run_bots() -> None:
+    global app
+    admin = _build_application(ADMIN_BOT_TOKEN, "admin")
+    public = _build_application(PUBLIC_BOT_TOKEN, "public")
+    app = admin
+    applications = (admin, public)
+    try:
+        for application in applications:
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling(drop_pending_updates=True)
+        # Manual startup does not invoke PTB's post_init callback. Invoke the
+        # application-registered lifecycle callback exactly once for the shared
+        # scheduler after initialization and before polling work.
+        if admin.post_init is not None:
+            await admin.post_init(admin)
+        await asyncio.Event().wait()
+    finally:
+        if admin.post_shutdown is not None:
+            await admin.post_shutdown(admin)
+        for application in reversed(applications):
+            if application.updater and application.updater.running:
+                await application.updater.stop()
+            if application.running:
+                await application.stop()
+            await application.shutdown()
+
+
+def main() -> None:
+    if not ADMIN_BOT_TOKEN or not PUBLIC_BOT_TOKEN:
+        raise RuntimeError("ADMIN_TELEGRAM_BOT_TOKEN and PUBLIC_TELEGRAM_BOT_TOKEN are required")
+    asyncio.run(_run_bots())
+

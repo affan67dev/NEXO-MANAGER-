@@ -58,19 +58,22 @@ class BootstrapTests(unittest.TestCase):
         for forbidden in ("git reset --hard", "git clean", "git push --force", "git checkout -f"):
             self.assertNotIn(forbidden, source)
 
-    def test_model_detection_is_optional(self):
-        value = MOD.find_model()
-        self.assertTrue(value is None or value.lower().endswith(".gguf"))
+    def test_no_local_model_detection_or_download(self):
+        source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("find_model(", source)
+        self.assertNotIn("gguf", source)
+        self.assertNotIn("llama.cpp", source)
 
-    def test_ready_flag_is_supported(self):
+    def test_bootstrap_help_flags_match_current_runtime(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
-        self.assertIn('parser.add_argument("--ready"', source)
-        self.assertIn("def ready_mode(", source)
+        self.assertIn('parser.add_argument("--no-install"', source)
+        self.assertIn('parser.add_argument("--full-deps"', source)
+        self.assertIn('parser.add_argument("--enable-autostart"', source)
 
     def test_termux_voice_api_boundary(self):
-        self.assertIn("termux-speech-to-text", MOD.VOICE_TERMUX_COMMANDS)
-        self.assertIn("termux-tts-speak", MOD.VOICE_TERMUX_COMMANDS)
-        self.assertIn("termux-toast", MOD.VOICE_TERMUX_COMMANDS)
+        self.assertIn("termux-speech-to-text", MOD.TERMUX_COMMANDS)
+        self.assertIn("termux-tts-speak", MOD.TERMUX_COMMANDS)
+        self.assertIn("termux-toast", MOD.TERMUX_COMMANDS)
 
     def test_setup_does_not_download_models(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8").lower()

@@ -10,7 +10,6 @@ REMOTE="origin"
 BRANCH="main"
 REPO_SLUG="affan67dev/NEXO-MANAGER-"
 CI_WORKFLOW="NEXO CI"
-HEALTH_URL="http://127.0.0.1:8080/health"
 HEALTH_ATTEMPTS=6
 HEALTH_DELAY=5
 
@@ -25,6 +24,8 @@ cd "$REPO_DIR"
 state() { cat "${STATE_DIR}/$1" 2>/dev/null || true; }
 write_state() { printf '%s\n' "$2" > "${STATE_DIR}/$1"; }
 
+# nexo-llama is a historical PM2 process name retained for Termux compatibility.
+# It is not treated here as evidence of a local LLM server.
 pm2_ok() {
   command -v pm2 >/dev/null 2>&1 || return 1
   pm2 describe nexo-backend >/dev/null 2>&1 || return 1
@@ -34,11 +35,20 @@ pm2_ok() {
   [[ "$statuses" == "online online" ]]
 }
 restart_nexo() { pm2 describe nexo-backend >/dev/null 2>&1 && pm2 describe nexo-llama >/dev/null 2>&1 && pm2 restart nexo-backend nexo-llama --update-env >/dev/null; }
+
+hosted_config_ok() {
+  python - <<'PY'
+from dotenv import load_dotenv
+load_dotenv(str(__import__("pathlib").Path.home() / ".nexo.env"), override=False)
+from services.llm_provider import LLMConfig
+config = LLMConfig.from_env()
+raise SystemExit(0 if config.provider == "openrouter" else 1)
+PY
+}
 health_ok() {
-  local attempt status
+  local attempt
   for ((attempt=1; attempt<=HEALTH_ATTEMPTS; attempt++)); do
-    status="$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' "$HEALTH_URL" 2>/dev/null || printf '000')"
-    if [[ "$status" == "200" ]] && pm2_ok; then return 0; fi
+    if hosted_config_ok && pm2_ok; then return 0; fi
     [[ "$attempt" -lt "$HEALTH_ATTEMPTS" ]] && sleep "$HEALTH_DELAY"
   done
   return 1
