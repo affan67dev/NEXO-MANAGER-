@@ -2,6 +2,8 @@
 requests
 psutil
 pydantic
+fastapi
+uvicorn
 httpx
 python-dotenv
 python-telegram-bot>=22,<23
