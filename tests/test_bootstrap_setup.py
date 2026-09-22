@@ -29,7 +29,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(MOD.ENV_FILE, Path.home() / ".nexo.env")
 
     def test_pm2_boundary(self):
-        self.assertEqual(MOD.PM2_NAMES, ("nexo-backend", "nexo-llama"))
+        self.assertEqual(MOD.PM2_NAMES, ("nexo-backend",))
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
         self.assertNotIn("omnix-backend", source.lower())
 
@@ -60,7 +60,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_model_detection_is_optional(self):
         value = MOD.find_model()
-        self.assertTrue(value is None or value.lower().endswith(".gguf"))
+        self.assertIsNone(value)
 
     def test_ready_flag_is_supported(self):
         source = (ROOT / "scripts" / "bootstrap_nexo.py").read_text(encoding="utf-8")
